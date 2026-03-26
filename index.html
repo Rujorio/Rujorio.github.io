@@ -2,8 +2,10 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Infinite Chess Multiplayer</title>
-    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: 'unsafe-inline' 'unsafe-eval'; connect-src https: wss:;">
+    <title>Infinite Chess</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
     <style>
         body {
             margin: 0;
@@ -14,7 +16,12 @@
 
         canvas {
             display: block;
-            cursor: grab;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 1; /* Puts the board behind the UI */
         }
 
         #ui {
@@ -22,212 +29,90 @@
             top: 10px;
             left: 10px;
             color: white;
-            background: rgba(0,0,0,0.85);
+            background: rgba(0,0,0,0.8);
             padding: 15px;
-            border-radius: 8px;
+            border-radius: 9px;
             pointer-events: auto;
-            z-index: 10;
+            user-select: text; /* Allowed interaction for copying ID */
+            z-index: 100;
         }
 
-        input {
-            background: #333;
-            color: white;
-            border: 1px solid #555;
-            padding: 5px;
-            margin: 5px 0;
-            width: 150px;
-        }
-
-        button {
-            cursor: pointer;
-            padding: 5px 10px;
-            background: #4CAF50;
-            border: none;
-            color: white;
-            border-radius: 3px;
-        }
-
-        .status {
+        .controls {
             font-size: 0.8em;
-            color: #aaa;
+            opacity: 0.8;
             margin-top: 5px;
+        }
+
+        #peer-info {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #444;
+            font-size: 0.9em;
+            color: #00ff00;
         }
     </style>
 </head>
 <body>
 
     <div id="ui">
-        <div id="turn">Status: Disconnected</div>
-        <div id="setup">
-            <p>Your ID: <b id="my-id">...</b></p>
-            <input type="text" id="join-id" placeholder="Friend's ID">
-            <button onclick="connectToFriend()">Connect</button>
-        </div>
-        <div class="status">Drag to Pan | Scroll to Zoom</div>
+        <div id="turn">Turn: White</div>
+        <div class="controls">Drag to Pan | Scroll to Zoom | Click to Move</div>
+        <div id="peer-info">Connecting to network...</div>
     </div>
+
     <canvas id="gameCanvas"></canvas>
 
     <script>
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         const turnDisplay = document.getElementById('turn');
-        const myIdDisplay = document.getElementById('my-id');
+        const peerInfo = document.getElementById('peer-info');
 
-        let width, height, board = [];
+        let width, height;
         let cellSize = 60;
         let camera = { x: 0, y: 0, zoom: 1 };
-        let isDragging = false, lastMouse = { x: 0, y: 0 };
+        let isDragging = false;
+        let lastMouse = { x: 0, y: 0 };
         let selectedPiece = null;
         let turn = 'white';
-        let myColor = null; // Set when connecting
 
-        // Networking
-        const peer = new Peer({
-            config: {
-                'iceServers': [
-                    { url: 'stun:stun.l.google.com:19302' },
-                    { url: 'stun:stun1.l.google.com:19302' }
-                ]
-            }
-        });
-        let conn = null;
-
-        peer.on('open', (id) => { myIdDisplay.innerText = id; });
-
-        // Acting as the Host
-        peer.on('connection', (connection) => {
-            conn = connection;
-            myColor = 'white';
-            setupConn();
-            turnDisplay.innerText = "Connected! You are White";
-        });
-
-        // Acting as the Guest
-        function connectToFriend() {
-            const friendId = document.getElementById('join-id').value;
-            conn = peer.connect(friendId);
-            myColor = 'black';
-            setupConn();
-            turnDisplay.innerText = "Connected! You are Black";
-        }
-
-        function setupConn() {
-            document.getElementById('setup').style.display = 'none';
-            conn.on('data', (data) => {
-                if (data.type === 'move') {
-                    const piece = board.find(p => p.id === data.pieceId);
-                    // Remove target if captured
-                    board = board.filter(p => !(p.x === data.x && p.y === data.y));
-                    if (piece) {
-                        piece.x = data.x;
-                        piece.y = data.y;
-                        turn = turn === 'white' ? 'black' : 'white';
-                        updateTurnUI();
-                    }
-                }
-            });
-        }
-
-        // Chess Logic
         const PIECES = {
             white: { r: '♖', n: '♘', b: '♗', q: '♕', k: '♔', p: '♙' },
             black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
         };
 
+        let board = [];
+
+        // 3. INITIALIZE PEERJS
+        const peer = new Peer();
+
+        peer.on('open', (id) => {
+            peerInfo.innerText = "Your ID: " + id;
+            console.log("My peer ID is: " + id);
+        });
+
+        peer.on('error', (err) => {
+            peerInfo.innerText = "Connection Error!";
+            console.error(err);
+        });
+
         function initBoard() {
             const layout = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
-            let idCounter = 0;
             for (let i = 0; i < 8; i++) {
-                board.push({ id: idCounter++, x: i, y: 7, type: layout[i], color: 'white' });
-                board.push({ id: idCounter++, x: i, y: 6, type: 'p', color: 'white' });
-                board.push({ id: idCounter++, x: i, y: 0, type: layout[i], color: 'black' });
-                board.push({ id: idCounter++, x: i, y: 1, type: 'p', color: 'black' });
+                board.push({ x: i, y: 7, type: layout[i], color: 'white' });
+                board.push({ x: i, y: 6, type: 'p', color: 'white' });
+                board.push({ x: i, y: 0, type: layout[i], color: 'black' });
+                board.push({ x: i, y: 1, type: 'p', color: 'black' });
             }
         }
 
-        function isValidMove(piece, targetX, targetY) {
-            const dx = Math.abs(targetX - piece.x);
-            const dy = Math.abs(targetY - piece.y);
-            const sgnX = Math.sign(targetX - piece.x);
-            const sgnY = Math.sign(targetY - piece.y);
-
-            // 1. Check if a friendly piece is already there
-            const targetPiece = board.find(p => p.x === targetX && p.y === targetY);
-            if (targetPiece && targetPiece.color === piece.color) return false;
-
-            // 2. Specific Piece Logic
-            switch (piece.type) {
-                case 'p': // Pawn (Simplified: moves 1 forward, captures diagonally)
-                    const dir = piece.color === 'white' ? -1 : 1;
-                    if (targetX === piece.x && targetY === piece.y + dir && !targetPiece) return true;
-                    if (dx === 1 && targetY === piece.y + dir && targetPiece) return true;
-                    return false;
-
-                case 'r': // Rook
-                    if (piece.x !== targetX && piece.y !== targetY) return false;
-                    return isPathClear(piece.x, piece.y, targetX, targetY);
-
-                case 'n': // Knight
-                    return (dx === 1 && dy === 2) || (dx === 2 && dy === 1);
-
-                case 'b': // Bishop
-                    if (dx !== dy) return false;
-                    return isPathClear(piece.x, piece.y, targetX, targetY);
-
-                case 'q': // Queen
-                    if (dx !== dy && piece.x !== targetX && piece.y !== targetY) return false;
-                    return isPathClear(piece.x, piece.y, targetX, targetY);
-
-                case 'k': // King
-                    return dx <= 1 && dy <= 1;
-            }
-            return false;
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
         }
 
-        // Check if any pieces are blocking the way (Sliding pieces)
-        function isPathClear(x1, y1, x2, y2) {
-            let currX = x1 + Math.sign(x2 - x1);
-            let currY = y1 + Math.sign(y2 - y1);
-            while (currX !== x2 || currY !== y2) {
-                if (board.find(p => p.x === currX && p.y === currY)) return false;
-                if (currX !== x2) currX += Math.sign(x2 - x1);
-                if (currY !== y2) currY += Math.sign(y2 - y1);
-            }
-            return true;
-        }
+        window.addEventListener('resize', resize);
 
-        // Updated Click Handler
-        function handleCellClick(x, y) {
-            if (turn !== myColor) return;
-
-            const pieceAtPos = board.find(p => p.x === x && p.y === y);
-
-            if (selectedPiece) {
-                if (isValidMove(selectedPiece, x, y)) {
-                    const moveData = { type: 'move', x: x, y: y, pieceId: selectedPiece.id };
-                    conn.send(moveData);
-
-                    board = board.filter(p => !(p.x === x && p.y === y));
-                    selectedPiece.x = x;
-                    selectedPiece.y = y;
-                    selectedPiece = null;
-                    turn = turn === 'white' ? 'black' : 'white';
-                    updateTurnUI();
-                } else {
-                    // Select a different friendly piece or deselect
-                    selectedPiece = (pieceAtPos && pieceAtPos.color === turn) ? pieceAtPos : null;
-                }
-            } else if (pieceAtPos && pieceAtPos.color === turn) {
-                selectedPiece = pieceAtPos;
-            }
-        }
-
-        function updateTurnUI() {
-            const status = (turn === myColor) ? "Your Turn" : "Opponent's Turn";
-            turnDisplay.innerText = `${status} (${turn})`;
-        }
-
-        // Rendering & Input (Same as before but with Board Drawing)
         function draw() {
             ctx.clearRect(0, 0, width, height);
             const viewStep = cellSize * camera.zoom;
@@ -244,11 +129,14 @@
             }
 
             if (selectedPiece) {
-                ctx.strokeStyle = '#ff0000'; ctx.lineWidth = 3;
+                ctx.strokeStyle = '#ff0000';
+                ctx.lineWidth = 3;
                 ctx.strokeRect(width / 2 + camera.x + selectedPiece.x * viewStep, height / 2 + camera.y + selectedPiece.y * viewStep, viewStep, viewStep);
             }
 
-            ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = `${viewStep * 0.8}px serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = `${viewStep * 0.8}px serif`;
             board.forEach(p => {
                 ctx.fillStyle = 'black';
                 ctx.fillText(PIECES[p.color][p.type], width / 2 + camera.x + (p.x + 0.5) * viewStep, height / 2 + camera.y + (p.y + 0.5) * viewStep);
@@ -256,16 +144,62 @@
             requestAnimationFrame(draw);
         }
 
-        // Standard Boilerplate
-        function resize() { width = canvas.width = window.innerWidth; height = canvas.height = window.innerHeight; }
-        window.addEventListener('resize', resize);
-        resize();
-        initBoard();
-        canvas.onmousedown = (e) => { isDragging = false; lastMouse = { x: e.clientX, y: e.clientY }; };
-        canvas.onmousemove = (e) => { if (e.buttons === 1) { isDragging = true; camera.x += e.clientX - lastMouse.x; camera.y += e.clientY - lastMouse.y; lastMouse = { x: e.clientX, y: e.clientY }; } };
-        canvas.onmouseup = (e) => { if (!isDragging) { const world = { x: Math.floor((e.clientX - width / 2 - camera.x) / (cellSize * camera.zoom)), y: Math.floor((e.clientY - height / 2 - camera.y) / (cellSize * camera.zoom)) }; handleCellClick(world.x, world.y); } };
-        canvas.onwheel = (e) => { camera.zoom *= e.deltaY > 0 ? 0.9 : 1.1; camera.zoom = Math.max(0.1, Math.min(camera.zoom, 5)); };
-        draw();
+        // Input logic kept the same...
+        canvas.addEventListener('mousedown', (e) => { isDragging = false; lastMouse = { x: e.clientX, y: e.clientY }; });
+        canvas.addEventListener('mousemove', (e) => {
+            if (e.buttons === 1) {
+                isDragging = true;
+                camera.x += e.clientX - lastMouse.x;
+                camera.y += e.clientY - lastMouse.y;
+                lastMouse = { x: e.clientX, y: e.clientY };
+            }
+        });
+        canvas.addEventListener('mouseup', (e) => { if (!isDragging) handleCellClick(screenToWorld(e.clientX, e.clientY)); });
+        canvas.addEventListener('wheel', (e) => {
+            camera.zoom *= (e.deltaY > 0 ? 0.9 : 1.1);
+            camera.zoom = Math.max(0.1, Math.min(camera.zoom, 5));
+        });
+
+        function screenToWorld(pos) {
+            return {
+                x: Math.floor((pos.x - width / 2 - camera.x) / (cellSize * camera.zoom)),
+                y: Math.floor((pos.y - height / 2 - camera.y) / (cellSize * camera.zoom))
+            };
+        }
+
+        function handleCellClick(worldPos) {
+            const x = worldPos.x; const y = worldPos.y;
+            const pieceAtPos = board.find(p => p.x === x && p.y === y);
+            if (selectedPiece) {
+                if (pieceAtPos && pieceAtPos.color !== selectedPiece.color) {
+                    board = board.filter(p => p !== pieceAtPos);
+                    movePiece(x, y);
+                } else if (!pieceAtPos) {
+                    movePiece(x, y);
+                } else {
+                    selectedPiece = pieceAtPos.color === turn ? pieceAtPos : null;
+                }
+            } else if (pieceAtPos && pieceAtPos.color === turn) {
+                selectedPiece = pieceAtPos;
+            }
+        }
+
+        function movePiece(x, y) {
+            selectedPiece.x = x;
+            selectedPiece.y = y;
+            selectedPiece = null;
+            turn = turn === 'white' ? 'black' : 'white';
+            turnDisplay.innerText = `Turn: ${turn.charAt(0).toUpperCase() + turn.slice(1)}`;
+        }
+
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                resize();
+                initBoard();
+                draw();
+            }, 100);
+        });
     </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
 </body>
 </html>
