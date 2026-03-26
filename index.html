@@ -38,11 +38,12 @@
             z-index: 100;
             box-shadow: 0 4px 15px rgba(0,0,0,0.5);
             pointer-events: auto;
+            min-width: 180px;
         }
 
         #status {
             font-size: 0.85em;
-            color: #aaa;
+            color: #00ff00;
             margin-bottom: 5px;
             font-weight: bold;
         }
@@ -53,22 +54,36 @@
             margin-bottom: 10px;
         }
 
-        input {
-            background: #333;
-            border: 1px solid #555;
-            color: white;
-            padding: 6px;
-            border-radius: 4px;
-            width: 110px;
+        #lobby-list {
+            margin-top: 10px;
+            border-top: 1px solid #444;
+            padding-top: 10px;
         }
 
-        button {
-            border: none;
+        .lobby-item {
+            display: block;
+            width: 100%;
+            background: #28a745;
             color: white;
-            padding: 6px 10px;
+            border: none;
+            padding: 8px;
+            margin-bottom: 5px;
             border-radius: 4px;
             cursor: pointer;
-            background: #28a745;
+            font-size: 0.8em;
+            text-align: left;
+        }
+
+            .lobby-item:hover {
+                background: #218838;
+            }
+
+        .lobby-label {
+            font-size: 0.7em;
+            text-transform: uppercase;
+            color: #aaa;
+            margin-bottom: 5px;
+            display: block;
         }
     </style>
 </head>
@@ -77,20 +92,20 @@
     <div id="ui">
         <div id="turn">Turn: White</div>
         <div class="controls">Drag to Pan | Scroll to Zoom</div>
-        <div id="status">Status: Enter Room Name</div>
-        <input type="text" id="room-id" placeholder="e.g. chess123">
-        <button onclick="joinRoom()">Join Game</button>
+        <div id="status">Status: Hosting...</div>
+
+        <div id="lobby-list">
+            <span class="lobby-label">Available Games:</span>
+            <div id="rooms-container"></div>
+        </div>
     </div>
 
     <canvas id="gameCanvas"></canvas>
 
     <script>
-        // CONFIG FROM YOUR SCREENSHOT
-        // Updated with your actual URL from image_4f7afe.png
         const firebaseConfig = {
             apiKey: "AIzaSyCkwChcME83CiH_D7RbO9kYD0sBPYcCl6Y",
             authDomain: "chess-2-2a1c9.firebaseapp.com",
-            // THIS LINE WAS THE PROBLEM:
             databaseURL: "https://chess-2-2a1c9-default-rtdb.europe-west1.firebasedatabase.app",
             projectId: "chess-2-2a1c9",
             storageBucket: "chess-2-2a1c9.appspot.com",
@@ -100,12 +115,16 @@
 
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
+
+        let myRoomId = Math.floor(1000 + Math.random() * 9000).toString();
+        let currentRoomId = myRoomId;
         let roomRef = null;
 
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         const statusDisplay = document.getElementById('status');
         const turnDisplay = document.getElementById('turn');
+        const roomsContainer = document.getElementById('rooms-container');
 
         let width, height, cellSize = 60;
         let camera = { x: 0, y: 0, zoom: 1 };
@@ -117,13 +136,22 @@
             black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
         };
 
-        function joinRoom() {
-            const roomId = document.getElementById('room-id').value.trim().toLowerCase();
-            if (!roomId) return;
+        // --- LOBBY LOGIC ---
 
+        function initAsHost(id) {
             if (roomRef) roomRef.off();
-            roomRef = db.ref('rooms/' + roomId);
-            statusDisplay.innerText = "Status: Connecting...";
+            currentRoomId = id;
+            roomRef = db.ref('rooms/' + id);
+
+            initBoard();
+            roomRef.set({
+                board: board,
+                turn: 'white',
+                hostName: "Player " + id
+            });
+
+            // If user leaves/closes tab, delete their room
+            roomRef.onDisconnect().remove();
 
             roomRef.on('value', (snapshot) => {
                 const data = snapshot.val();
@@ -131,17 +159,53 @@
                     board = data.board || [];
                     turn = data.turn || 'white';
                     updateTurnDisplay();
-                    statusDisplay.innerText = "Status: In Room " + roomId;
-                    statusDisplay.style.color = "#00ff00";
-                } else {
-                    initBoard();
-                    syncToFirebase();
+                    statusDisplay.innerText = "Status: Hosting (" + id + ")";
                 }
             });
         }
 
+        function joinOtherRoom(targetId) {
+            // 1. Delete our current room
+            db.ref('rooms/' + currentRoomId).remove().then(() => {
+                // 2. Switch to the new room
+                if (roomRef) roomRef.off();
+                currentRoomId = targetId;
+                roomRef = db.ref('rooms/' + targetId);
+
+                statusDisplay.innerText = "Status: Joined " + targetId;
+
+                roomRef.on('value', (snapshot) => {
+                    const data = snapshot.val();
+                    if (data) {
+                        board = data.board || [];
+                        turn = data.turn || 'white';
+                        updateTurnDisplay();
+                    }
+                });
+            });
+        }
+
+        // Listen for all active rooms to show in the UI
+        db.ref('rooms').on('value', (snapshot) => {
+            roomsContainer.innerHTML = "";
+            let count = 0;
+            snapshot.forEach((child) => {
+                if (child.key !== currentRoomId) {
+                    count++;
+                    const btn = document.createElement('button');
+                    btn.className = 'lobby-item';
+                    btn.innerText = "▶ Join " + (child.val().hostName || child.key);
+                    btn.onclick = () => joinOtherRoom(child.key);
+                    roomsContainer.appendChild(btn);
+                }
+            });
+            if (count === 0) roomsContainer.innerHTML = "<span style='font-size:0.7em; color:#666;'>No other players online</span>";
+        });
+
+        // --- GAME LOGIC ---
+
         function syncToFirebase() {
-            if (roomRef) roomRef.set({ board, turn });
+            if (roomRef) roomRef.update({ board, turn });
         }
 
         function initBoard() {
@@ -240,7 +304,9 @@
             camera.zoom = Math.max(0.1, Math.min(camera.zoom, 5));
         });
 
+        // Initialize
         resize();
+        initAsHost(myRoomId);
         draw();
     </script>
 </body>
