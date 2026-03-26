@@ -3,10 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' https:; connect-src 'self' https://0.peerjs.com wss://0.peerjs.com https://peerjs.com; script-src 'self' 'unsafe-inline' 'unsafe-eval';">
-    <title>Infinite Chess</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' https:; connect-src 'self' https://*.firebaseio.com wss://*.firebaseio.com https://*.googleapis.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com;">
+    <title>Infinite Chess 2</title>
 
-    <script src="peerjs.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
 
     <style>
         body {
@@ -34,9 +35,9 @@
             background: rgba(0,0,0,0.9);
             padding: 15px;
             border-radius: 9px;
-            pointer-events: auto;
             z-index: 100;
             box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            pointer-events: auto;
         }
 
         #status {
@@ -52,12 +53,6 @@
             margin-bottom: 10px;
         }
 
-        #peer-area {
-            margin-top: 10px;
-            padding-top: 10px;
-            border-top: 1px solid #444;
-        }
-
         input {
             background: #333;
             border: 1px solid #555;
@@ -65,7 +60,6 @@
             padding: 6px;
             border-radius: 4px;
             width: 110px;
-            font-size: 0.8em;
         }
 
         button {
@@ -74,12 +68,6 @@
             padding: 6px 10px;
             border-radius: 4px;
             cursor: pointer;
-            font-size: 0.8em;
-            margin: 2px;
-            background: #555;
-        }
-
-        .btn-green {
             background: #28a745;
         }
     </style>
@@ -89,96 +77,69 @@
     <div id="ui">
         <div id="turn">Turn: White</div>
         <div class="controls">Drag to Pan | Scroll to Zoom</div>
-        <div id="peer-area">
-            <div id="status">Status: Initializing...</div>
-            <div style="font-size: 0.8em; color: #888; margin-bottom: 5px;">
-                <span id="my-id">ID: ---</span>
-            </div>
-            <input type="text" id="remote-id" placeholder="Friend's ID">
-            <button class="btn-green" onclick="connectToFriend()">Connect</button>
-        </div>
+        <div id="status">Status: Enter Room Name</div>
+        <input type="text" id="room-id" placeholder="e.g. chess123">
+        <button onclick="joinRoom()">Join Game</button>
     </div>
 
     <canvas id="gameCanvas"></canvas>
 
     <script>
+        // CONFIG FROM YOUR SCREENSHOT
+        const firebaseConfig = {
+            apiKey: "AIzaSyCkwChcME83CiH_D7RbO9kYD0sBPYcCl6Y",
+            authDomain: "chess-2-2a1c9.firebaseapp.com",
+            databaseURL: "https://chess-2-2a1c9-default-rtdb.firebaseio.com",
+            projectId: "chess-2-2a1c9",
+            storageBucket: "chess-2-2a1c9.appspot.com",
+            messagingSenderId: "1048494437159",
+            appId: "1:1048494437159:web:f471c57a71d361c3982f02"
+        };
+
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+        let roomRef = null;
+
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         const statusDisplay = document.getElementById('status');
-        const myIdDisplay = document.getElementById('my-id');
         const turnDisplay = document.getElementById('turn');
 
         let width, height, cellSize = 60;
         let camera = { x: 0, y: 0, zoom: 1 };
         let isDragging = false, lastMouse = { x: 0, y: 0 };
         let selectedPiece = null, turn = 'white', board = [];
-        let peer = null, conn = null;
 
         const PIECES = {
             white: { r: '♖', n: '♘', b: '♗', q: '♕', k: '♔', p: '♙' },
             black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
         };
 
-        function initPeer() {
-            if (typeof Peer === 'undefined') {
-                statusDisplay.innerText = "Error: peerjs.min.js missing!";
-                statusDisplay.style.color = "red";
-                return;
-            }
+        function joinRoom() {
+            const roomId = document.getElementById('room-id').value.trim().toLowerCase();
+            if (!roomId) return;
 
-            // Enhanced configuration to bypass Discord's proxy filters
-            peer = new Peer({
-                host: '0.peerjs.com',
-                port: 443,
-                secure: true,
-                debug: 3, // Increased debug level to see more in your console
-                path: '/', // Explicitly setting the root path helps some proxies
-                config: {
-                    'iceServers': [
-                        { urls: 'stun:stun.l.google.com:19302' },
-                        { urls: 'stun:stun1.l.google.com:19302' }
-                    ],
-                    'sdpSemantics': 'unified-plan'
+            if (roomRef) roomRef.off();
+            roomRef = db.ref('rooms/' + roomId);
+            statusDisplay.innerText = "Status: Connecting...";
+
+            roomRef.on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    board = data.board || [];
+                    turn = data.turn || 'white';
+                    updateTurnDisplay();
+                    statusDisplay.innerText = "Status: In Room " + roomId;
+                    statusDisplay.style.color = "#00ff00";
+                } else {
+                    initBoard();
+                    syncToFirebase();
                 }
             });
-
-            peer.on('open', (id) => {
-                myIdDisplay.innerText = "ID: " + id;
-                statusDisplay.innerText = "Status: Online";
-                statusDisplay.style.color = "#00ff00";
-            });
-
-            peer.on('error', (err) => {
-                console.error("Detailed Error:", err.type);
-                // If it says 'unavailable-id', it's a server glitch. 
-                // If it says 'network', Discord is still blocking the port.
-                statusDisplay.innerText = "Net Error: " + err.type;
-                statusDisplay.style.color = "#ff4444";
-            });
-
-            peer.on('connection', (c) => {
-                conn = c;
-                setupConnection();
-            });
         }
 
-        function setupConnection() {
-            conn.on('open', () => {
-                statusDisplay.innerText = "Status: Connected!";
-                conn.send({ type: 'sync', board: board, turn: turn });
-            });
-            conn.on('data', (data) => {
-                if (data.type === 'move') applyMove(data.from, data.to);
-                if (data.type === 'sync') { board = data.board; turn = data.turn; updateTurnDisplay(); }
-            });
-        }
-
-        function connectToFriend() {
-            const id = document.getElementById('remote-id').value.trim();
-            if (id) {
-                conn = peer.connect(id);
-                setupConnection();
-            }
+        function syncToFirebase() {
+            if (roomRef) roomRef.set({ board, turn });
         }
 
         function initBoard() {
@@ -200,6 +161,7 @@
             selectedPiece = null;
             turn = (turn === 'white') ? 'black' : 'white';
             updateTurnDisplay();
+            syncToFirebase();
         }
 
         function updateTurnDisplay() {
@@ -261,13 +223,14 @@
                 const pieceAtPos = board.find(p => p.x === worldPos.x && p.y === worldPos.y);
 
                 if (selectedPiece) {
-                    const from = { x: selectedPiece.x, y: selectedPiece.y };
-                    const to = worldPos;
                     if (!pieceAtPos || pieceAtPos.color !== selectedPiece.color) {
-                        applyMove(from, to);
-                        if (conn && conn.open) conn.send({ type: 'move', from, to });
-                    } else { selectedPiece = (pieceAtPos.color === turn) ? pieceAtPos : null; }
-                } else if (pieceAtPos && pieceAtPos.color === turn) { selectedPiece = pieceAtPos; }
+                        applyMove({ x: selectedPiece.x, y: selectedPiece.y }, worldPos);
+                    } else {
+                        selectedPiece = (pieceAtPos.color === turn) ? pieceAtPos : null;
+                    }
+                } else if (pieceAtPos && pieceAtPos.color === turn) {
+                    selectedPiece = pieceAtPos;
+                }
             }
         });
         canvas.addEventListener('wheel', (e) => {
@@ -275,12 +238,8 @@
             camera.zoom = Math.max(0.1, Math.min(camera.zoom, 5));
         });
 
-        initBoard();
         resize();
         draw();
-
-        // Wait 2 seconds for Discord proxy to stabilize
-        setTimeout(initPeer, 2000);
     </script>
 </body>
 </html>
