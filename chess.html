@@ -145,17 +145,68 @@
             }
         }
 
+        function isValidMove(piece, targetX, targetY) {
+            const dx = Math.abs(targetX - piece.x);
+            const dy = Math.abs(targetY - piece.y);
+            const sgnX = Math.sign(targetX - piece.x);
+            const sgnY = Math.sign(targetY - piece.y);
+
+            // 1. Check if a friendly piece is already there
+            const targetPiece = board.find(p => p.x === targetX && p.y === targetY);
+            if (targetPiece && targetPiece.color === piece.color) return false;
+
+            // 2. Specific Piece Logic
+            switch (piece.type) {
+                case 'p': // Pawn (Simplified: moves 1 forward, captures diagonally)
+                    const dir = piece.color === 'white' ? -1 : 1;
+                    if (targetX === piece.x && targetY === piece.y + dir && !targetPiece) return true;
+                    if (dx === 1 && targetY === piece.y + dir && targetPiece) return true;
+                    return false;
+
+                case 'r': // Rook
+                    if (piece.x !== targetX && piece.y !== targetY) return false;
+                    return isPathClear(piece.x, piece.y, targetX, targetY);
+
+                case 'n': // Knight
+                    return (dx === 1 && dy === 2) || (dx === 2 && dy === 1);
+
+                case 'b': // Bishop
+                    if (dx !== dy) return false;
+                    return isPathClear(piece.x, piece.y, targetX, targetY);
+
+                case 'q': // Queen
+                    if (dx !== dy && piece.x !== targetX && piece.y !== targetY) return false;
+                    return isPathClear(piece.x, piece.y, targetX, targetY);
+
+                case 'k': // King
+                    return dx <= 1 && dy <= 1;
+            }
+            return false;
+        }
+
+        // Check if any pieces are blocking the way (Sliding pieces)
+        function isPathClear(x1, y1, x2, y2) {
+            let currX = x1 + Math.sign(x2 - x1);
+            let currY = y1 + Math.sign(y2 - y1);
+            while (currX !== x2 || currY !== y2) {
+                if (board.find(p => p.x === currX && p.y === currY)) return false;
+                if (currX !== x2) currX += Math.sign(x2 - x1);
+                if (currY !== y2) currY += Math.sign(y2 - y1);
+            }
+            return true;
+        }
+
+        // Updated Click Handler
         function handleCellClick(x, y) {
-            if (turn !== myColor) return; // Not your turn
+            if (turn !== myColor) return;
 
             const pieceAtPos = board.find(p => p.x === x && p.y === y);
 
             if (selectedPiece) {
-                if (!pieceAtPos || pieceAtPos.color !== selectedPiece.color) {
+                if (isValidMove(selectedPiece, x, y)) {
                     const moveData = { type: 'move', x: x, y: y, pieceId: selectedPiece.id };
-                    conn.send(moveData); // Send to friend
+                    conn.send(moveData);
 
-                    // Apply locally
                     board = board.filter(p => !(p.x === x && p.y === y));
                     selectedPiece.x = x;
                     selectedPiece.y = y;
@@ -163,7 +214,8 @@
                     turn = turn === 'white' ? 'black' : 'white';
                     updateTurnUI();
                 } else {
-                    selectedPiece = pieceAtPos;
+                    // Select a different friendly piece or deselect
+                    selectedPiece = (pieceAtPos && pieceAtPos.color === turn) ? pieceAtPos : null;
                 }
             } else if (pieceAtPos && pieceAtPos.color === turn) {
                 selectedPiece = pieceAtPos;
