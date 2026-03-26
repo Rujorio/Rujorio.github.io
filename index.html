@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: 'unsafe-inline' 'unsafe-eval'; connect-src https: wss:;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: 'unsafe-inline' 'unsafe-eval'; connect-src https: wss: *.peerjs.com;">
     <title>Infinite Chess</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
     <style>
@@ -66,10 +66,6 @@
             cursor: pointer;
         }
 
-            button:hover {
-                background: #218838;
-            }
-
         #status {
             font-size: 0.85em;
             color: #00ff00;
@@ -82,7 +78,6 @@
     <div id="ui">
         <div id="turn">Turn: White</div>
         <div class="controls">Drag to Pan | Scroll to Zoom</div>
-
         <div id="peer-area">
             <div id="status">Status: Connecting...</div>
             <div id="my-id" style="font-size: 0.8em; margin-bottom: 8px;">Your ID: ...</div>
@@ -109,7 +104,8 @@
         let turn = 'white';
         let board = [];
 
-        // --- MULTIPLAYER LOGIC ---
+        // --- PEERJS LOGIC ---
+        // Added explicit host configuration for better reliability
         const peer = new Peer();
         let conn = null;
 
@@ -118,17 +114,21 @@
             statusDisplay.innerText = "Status: Ready";
         });
 
-        // Receiving a connection
+        peer.on('error', (err) => {
+            console.error(err);
+            statusDisplay.innerText = "Status: Connection Error";
+            statusDisplay.style.color = "#ff4444";
+        });
+
         peer.on('connection', (c) => {
             conn = c;
             setupConnection();
-            statusDisplay.innerText = "Status: Connected!";
         });
 
         function connectToFriend() {
-            const id = document.getElementById('remote-id').value;
+            const id = document.getElementById('remote-id').value.trim();
             if (!id) return;
-            statusDisplay.innerText = "Status: Connecting...";
+            statusDisplay.innerText = "Status: Linking...";
             conn = peer.connect(id);
             setupConnection();
         }
@@ -136,18 +136,11 @@
         function setupConnection() {
             conn.on('open', () => {
                 statusDisplay.innerText = "Status: Connected!";
-                // Send current board state to friend when connecting
                 conn.send({ type: 'sync', board: board, turn: turn });
             });
-
             conn.on('data', (data) => {
-                if (data.type === 'move') {
-                    applyMove(data.from, data.to);
-                } else if (data.type === 'sync') {
-                    board = data.board;
-                    turn = data.turn;
-                    updateTurnDisplay();
-                }
+                if (data.type === 'move') applyMove(data.from, data.to);
+                if (data.type === 'sync') { board = data.board; turn = data.turn; updateTurnDisplay(); }
             });
         }
 
@@ -158,6 +151,7 @@
         };
 
         function initBoard() {
+            board = [];
             const layout = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
             for (let i = 0; i < 8; i++) {
                 board.push({ x: i, y: 7, type: layout[i], color: 'white' });
@@ -173,78 +167,52 @@
         }
 
         function draw() {
+            if (width === 0 || height === 0) resize();
             ctx.clearRect(0, 0, width, height);
-            const viewStep = cellSize * camera.zoom;
-            const startX = Math.floor((-width / 2 - camera.x) / viewStep);
-            const endX = Math.ceil((width / 2 - camera.x) / viewStep);
-            const startY = Math.floor((-height / 2 - camera.y) / viewStep);
-            const endY = Math.ceil((height / 2 - camera.y) / viewStep);
+            const vStep = cellSize * camera.zoom;
+            const sX = Math.floor((-width / 2 - camera.x) / vStep);
+            const eX = Math.ceil((width / 2 - camera.x) / vStep);
+            const sY = Math.floor((-height / 2 - camera.y) / vStep);
+            const eY = Math.ceil((height / 2 - camera.y) / vStep);
 
-            for (let x = startX; x <= endX; x++) {
-                for (let y = startY; y <= endY; y++) {
+            for (let x = sX; x <= eX; x++) {
+                for (let y = sY; y <= eY; y++) {
                     ctx.fillStyle = (x + y) % 2 === 0 ? '#eee' : '#999';
-                    ctx.fillRect(width / 2 + camera.x + x * viewStep, height / 2 + camera.y + y * viewStep, viewStep, viewStep);
+                    ctx.fillRect(width / 2 + camera.x + x * vStep, height / 2 + camera.y + y * vStep, vStep, vStep);
                 }
             }
-
             if (selectedPiece) {
-                ctx.strokeStyle = '#ff0000';
-                ctx.lineWidth = 3;
-                ctx.strokeRect(width / 2 + camera.x + selectedPiece.x * viewStep, height / 2 + camera.y + selectedPiece.y * viewStep, viewStep, viewStep);
+                ctx.strokeStyle = '#ff0000'; ctx.lineWidth = 3;
+                ctx.strokeRect(width / 2 + camera.x + selectedPiece.x * vStep, height / 2 + camera.y + selectedPiece.y * vStep, vStep, vStep);
             }
-
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.font = `${viewStep * 0.8}px serif`;
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = `${vStep * 0.8}px serif`;
             board.forEach(p => {
                 ctx.fillStyle = 'black';
-                ctx.fillText(PIECES[p.color][p.type], width / 2 + camera.x + (p.x + 0.5) * viewStep, height / 2 + camera.y + (p.y + 0.5) * viewStep);
+                ctx.fillText(PIECES[p.color][p.type], width / 2 + camera.x + (p.x + 0.5) * vStep, height / 2 + camera.y + (p.y + 0.5) * vStep);
             });
             requestAnimationFrame(draw);
-        }
-
-        function handleCellClick(worldPos) {
-            const x = worldPos.x; const y = worldPos.y;
-            const pieceAtPos = board.find(p => p.x === x && p.y === y);
-
-            if (selectedPiece) {
-                const from = { x: selectedPiece.x, y: selectedPiece.y };
-                const to = { x, y };
-
-                // Capture or Move
-                if (!pieceAtPos || pieceAtPos.color !== selectedPiece.color) {
-                    applyMove(from, to);
-                    // SEND MOVE TO FRIEND
-                    if (conn && conn.open) {
-                        conn.send({ type: 'move', from, to });
-                    }
-                } else {
-                    selectedPiece = pieceAtPos.color === turn ? pieceAtPos : null;
-                }
-            } else if (pieceAtPos && pieceAtPos.color === turn) {
-                selectedPiece = pieceAtPos;
-            }
         }
 
         function applyMove(from, to) {
             const piece = board.find(p => p.x === from.x && p.y === from.y);
             if (!piece) return;
-
-            // Remove target piece if it's a capture
             board = board.filter(p => !(p.x === to.x && p.y === to.y));
-
-            piece.x = to.x;
-            piece.y = to.y;
+            piece.x = to.x; piece.y = to.y;
             selectedPiece = null;
-            turn = turn === 'white' ? 'black' : 'white';
+            turn = (turn === 'white') ? 'black' : 'white';
             updateTurnDisplay();
         }
 
-        function updateTurnDisplay() {
-            turnDisplay.innerText = `Turn: ${turn.charAt(0).toUpperCase() + turn.slice(1)}`;
+        function updateTurnDisplay() { turnDisplay.innerText = `Turn: ${turn.charAt(0).toUpperCase() + turn.slice(1)}`; }
+
+        function screenToWorld(pos) {
+            return {
+                x: Math.floor((pos.x - width / 2 - camera.x) / (cellSize * camera.zoom)),
+                y: Math.floor((pos.y - height / 2 - camera.y) / (cellSize * camera.zoom))
+            };
         }
 
-        // Event Listeners
+        // Input Handlers
         window.addEventListener('resize', resize);
         canvas.addEventListener('mousedown', (e) => { isDragging = false; lastMouse = { x: e.clientX, y: e.clientY }; });
         canvas.addEventListener('mousemove', (e) => {
@@ -259,7 +227,16 @@
             if (!isDragging) {
                 const rect = canvas.getBoundingClientRect();
                 const worldPos = screenToWorld({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-                handleCellClick(worldPos);
+                const pieceAtPos = board.find(p => p.x === worldPos.x && p.y === worldPos.y);
+
+                if (selectedPiece) {
+                    const from = { x: selectedPiece.x, y: selectedPiece.y };
+                    const to = worldPos;
+                    if (!pieceAtPos || pieceAtPos.color !== selectedPiece.color) {
+                        applyMove(from, to);
+                        if (conn && conn.open) conn.send({ type: 'move', from, to });
+                    } else { selectedPiece = (pieceAtPos.color === turn) ? pieceAtPos : null; }
+                } else if (pieceAtPos && pieceAtPos.color === turn) { selectedPiece = pieceAtPos; }
             }
         });
         canvas.addEventListener('wheel', (e) => {
@@ -267,18 +244,10 @@
             camera.zoom = Math.max(0.1, Math.min(camera.zoom, 5));
         });
 
-        function screenToWorld(pos) {
-            return {
-                x: Math.floor((pos.x - width / 2 - camera.x) / (cellSize * camera.zoom)),
-                y: Math.floor((pos.y - height / 2 - camera.y) / (cellSize * camera.zoom))
-            };
-        }
-
-        window.addEventListener('load', () => {
-            resize();
-            initBoard();
-            draw();
-        });
+        // Start Everything
+        resize();
+        initBoard();
+        draw();
     </script>
 </body>
 </html>
