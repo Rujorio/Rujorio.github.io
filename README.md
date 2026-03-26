@@ -1,1 +1,1 @@
-# Rujorio.github.io
+# Rujorio.github.io/chess.html
