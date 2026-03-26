@@ -126,11 +126,19 @@
                 return;
             }
 
+            // Enhanced configuration to bypass Discord's proxy filters
             peer = new Peer({
                 host: '0.peerjs.com',
                 port: 443,
                 secure: true,
-                debug: 1
+                debug: 1,
+                config: {
+                    'iceServers': [
+                        { urls: 'stun:stun.l.google.com:19302' },
+                        { urls: 'stun:stun1.l.google.com:19302' }
+                    ],
+                    'sdpSemantics': 'unified-plan'
+                }
             });
 
             peer.on('open', (id) => {
@@ -140,6 +148,9 @@
             });
 
             peer.on('error', (err) => {
+                console.error("Detailed Error:", err.type);
+                // If it says 'unavailable-id', it's a server glitch. 
+                // If it says 'network', Discord is still blocking the port.
                 statusDisplay.innerText = "Net Error: " + err.type;
                 statusDisplay.style.color = "#ff4444";
             });
