@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' https:; connect-src 'self' https://*.firebaseio.com wss://*.firebaseio.com https://*.googleapis.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' https:; connect-src 'self' https://*.firebaseio.com wss://*.firebaseio.com https://*.googleapis.com https://*.firebasedatabase.app wss://*.firebasedatabase.app; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com;">
     <title>Infinite Chess 2</title>
 
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
@@ -136,7 +136,7 @@
             black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
         };
 
-        // --- LOBBY LOGIC ---
+        // --- IMPROVED LOBBY LOGIC ---
 
         function initAsHost(id) {
             if (roomRef) roomRef.off();
@@ -150,7 +150,6 @@
                 hostName: "Player " + id
             });
 
-            // If user leaves/closes tab, delete their room
             roomRef.onDisconnect().remove();
 
             roomRef.on('value', (snapshot) => {
@@ -165,13 +164,10 @@
         }
 
         function joinOtherRoom(targetId) {
-            // 1. Delete our current room
             db.ref('rooms/' + currentRoomId).remove().then(() => {
-                // 2. Switch to the new room
                 if (roomRef) roomRef.off();
                 currentRoomId = targetId;
                 roomRef = db.ref('rooms/' + targetId);
-
                 statusDisplay.innerText = "Status: Joined " + targetId;
 
                 roomRef.on('value', (snapshot) => {
@@ -185,21 +181,28 @@
             });
         }
 
-        // Listen for all active rooms to show in the UI
+        // Global listener for the lobby list
         db.ref('rooms').on('value', (snapshot) => {
             roomsContainer.innerHTML = "";
             let count = 0;
-            snapshot.forEach((child) => {
-                if (child.key !== currentRoomId) {
-                    count++;
-                    const btn = document.createElement('button');
-                    btn.className = 'lobby-item';
-                    btn.innerText = "▶ Join " + (child.val().hostName || child.key);
-                    btn.onclick = () => joinOtherRoom(child.key);
-                    roomsContainer.appendChild(btn);
-                }
-            });
-            if (count === 0) roomsContainer.innerHTML = "<span style='font-size:0.7em; color:#666;'>No other players online</span>";
+            const allRooms = snapshot.val();
+
+            if (allRooms) {
+                Object.keys(allRooms).forEach((key) => {
+                    if (key !== currentRoomId) {
+                        count++;
+                        const btn = document.createElement('button');
+                        btn.className = 'lobby-item';
+                        btn.innerText = "▶ Join " + (allRooms[key].hostName || key);
+                        btn.onclick = () => joinOtherRoom(key);
+                        roomsContainer.appendChild(btn);
+                    }
+                });
+            }
+
+            if (count === 0) {
+                roomsContainer.innerHTML = "<span style='font-size:0.7em; color:#666;'>Searching for players...</span>";
+            }
         });
 
         // --- GAME LOGIC ---
@@ -304,7 +307,6 @@
             camera.zoom = Math.max(0.1, Math.min(camera.zoom, 5));
         });
 
-        // Initialize
         resize();
         initAsHost(myRoomId);
         draw();
