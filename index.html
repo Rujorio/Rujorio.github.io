@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Infinite Chess 2</title>
 
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-database-compat.js"></script>
+    <script src="/gstatic/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="/gstatic/firebasejs/9.22.0/firebase-database-compat.js"></script>
 
     <style>
         body {
@@ -91,7 +91,7 @@
     <div id="ui">
         <div id="turn">Turn: White</div>
         <div class="controls">Drag to Pan | Scroll to Zoom</div>
-        <div id="status">Status: Hosting...</div>
+        <div id="status">Status: Connecting...</div>
 
         <div id="lobby-list">
             <span class="lobby-label">Available Games:</span>
@@ -102,17 +102,20 @@
     <canvas id="gameCanvas"></canvas>
 
     <script>
+        // Updated with your latest Firebase keys
         const firebaseConfig = {
-            apiKey: "AIzaSyCkwChcME83CiH_D7RbO9kYD0sBPYcCl6Y",
+            apiKey: "AIzaSyCkwCHcME83CIh_D7RbO9kYD0sBPYCcl6Y",
             authDomain: "chess-2-2a1c9.firebaseapp.com",
-            // This relative path bypasses the "not a root" error
-            databaseURL: "/firebase/",
             projectId: "chess-2-2a1c9",
-            storageBucket: "chess-2-2a1c9.appspot.com",
+            storageBucket: "chess-2-2a1c9.firebasestorage.app",
             messagingSenderId: "1048494437159",
-            appId: "1:1048494437159:web:f471c57a71d361c3982f02"
+            appId: "1:1048494437159:web:f471c57a71d361c982ef02",
+            measurementId: "G-XB4DL015VR",
+            // The "True Fix" for Discord Connectivity
+            databaseURL: "/firebase/"
         };
 
+        // Initialize using the Compat SDK style
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
 
@@ -136,8 +139,6 @@
             black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
         };
 
-        // --- LOBBY LOGIC ---
-
         function initAsHost(id) {
             if (roomRef) roomRef.off();
             currentRoomId = id;
@@ -150,7 +151,6 @@
                 hostName: "Player " + id
             });
 
-            // If user leaves/closes tab, delete their room
             roomRef.onDisconnect().remove();
 
             roomRef.on('value', (snapshot) => {
@@ -165,13 +165,10 @@
         }
 
         function joinOtherRoom(targetId) {
-            // 1. Delete our current room
             db.ref('rooms/' + currentRoomId).remove().then(() => {
-                // 2. Switch to the new room
                 if (roomRef) roomRef.off();
                 currentRoomId = targetId;
                 roomRef = db.ref('rooms/' + targetId);
-
                 statusDisplay.innerText = "Status: Joined " + targetId;
 
                 roomRef.on('value', (snapshot) => {
@@ -185,7 +182,6 @@
             });
         }
 
-        // Listen for all active rooms to show in the UI
         db.ref('rooms').on('value', (snapshot) => {
             roomsContainer.innerHTML = "";
             let count = 0;
@@ -201,8 +197,6 @@
             });
             if (count === 0) roomsContainer.innerHTML = "<span style='font-size:0.7em; color:#666;'>No other players online</span>";
         });
-
-        // --- GAME LOGIC ---
 
         function syncToFirebase() {
             if (roomRef) roomRef.update({ board, turn });
@@ -304,10 +298,13 @@
             camera.zoom = Math.max(0.1, Math.min(camera.zoom, 5));
         });
 
-        // Initialize
+        // Initialize board UI before connection for smoothness
         resize();
-        initAsHost(myRoomId);
+        initBoard();
         draw();
+
+        // Start connection
+        initAsHost(myRoomId);
     </script>
 </body>
 </html>
