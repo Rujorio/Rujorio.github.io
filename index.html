@@ -130,13 +130,12 @@
         function initPeer() {
             if (peer) peer.destroy();
 
-            // Hardened config for Discord Proxy
             peer = new Peer({
-                host: '0.peerjs.com',
+                host: 'peerjs-server.herokuapp.com',
                 port: 443,
                 secure: true,
                 pingInterval: 3000,
-                debug: 1
+                debug: 3
             });
 
             peer.on('open', (id) => {
@@ -148,7 +147,7 @@
             });
 
             peer.on('error', (err) => {
-                console.error(err);
+                console.error("PeerJS Error Type:", err.type);
                 statusDisplay.innerText = "Status: " + err.type;
                 statusDisplay.style.color = "#ff4444";
                 retryBtn.style.display = "inline-block";
