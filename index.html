@@ -15,6 +15,7 @@
             justify-content: center;
             height: 100vh;
             margin: 0;
+            overflow: hidden; /* Important for the toast animation */
         }
 
         .container {
@@ -23,6 +24,7 @@
             padding: 40px;
             border-radius: 15px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            max-width: 320px;
         }
 
         h1 {
@@ -47,29 +49,43 @@
 
             .copy-button:hover {
                 background: #218838;
-                transform: scale(1.05);
+                transform: translateY(-2px);
             }
 
             .copy-button:active {
-                transform: scale(0.98);
+                transform: translateY(0) scale(0.98);
             }
 
         .info {
             margin-top: 25px;
             font-size: 0.9em;
-            color: #888;
-            max-width: 320px;
+            color: #bbb;
             line-height: 1.5;
         }
 
-        #feedback {
-            margin-top: 15px;
-            font-size: 0.85em;
-            color: #00ff00;
+        /* --- Toast Notification Style --- */
+        .copied-toast {
+            position: fixed;
+            bottom: -50px; /* Start hidden below the screen */
+            left: 50%;
+            transform: translateX(-50%);
+            background: #28a745;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 20px;
             font-weight: bold;
-            height: 20px;
+            font-size: 0.9em;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            z-index: 200;
+            /* The floating and dissipating logic */
+            transition: bottom 0.5s ease-out, opacity 0.5s ease-out;
             opacity: 0;
-            transition: opacity 0.3s;
+            pointer-events: none; /* Can click through it */
+        }
+
+        .show-toast {
+            bottom: 30px; /* Animate into view */
+            opacity: 1; /* Dissipate: change this with keyframes for true 'floating away' */
         }
     </style>
 </head>
@@ -79,31 +95,35 @@
         <h1>Infinite Chess 2</h1>
 
         <button class="copy-button" id="copyBtn">
-            Copy Game URL to Play
+            Get Browser URL
         </button>
 
-        <div id="feedback">URL Copied! Paste into Browser</div>
-
         <p class="info">
-            Discord blocks internal loading. <br>
-            <b>Copy the link</b> and paste it into Chrome or Firefox to fix the "Firebase not defined" error.
+            This bypasses Discord's script blocks. <br>
+            Paste the link into Chrome or Firefox to fix the "Firebase not defined" error.
         </p>
     </div>
 
+    <div class="copied-toast" id="toast">Link Copied!</div>
+
     <script>
-        const gameUrl = "https://rujorio.github.io/chess.html";
+        // Use the relative path to your game file
+        const gameUrl = location.origin + "/chess.html";
         const btn = document.getElementById('copyBtn');
-        const feedback = document.getElementById('feedback');
+        const toast = document.getElementById('toast');
 
         btn.onclick = function () {
+            // Bypass sandbox restrictions: Copy data directly
             navigator.clipboard.writeText(gameUrl).then(() => {
-                feedback.style.opacity = "1";
-                btn.innerText = "Link Copied!";
-                btn.style.background = "#155724";
+                // Trigger the 'float and dissipate' animation
+                toast.classList.add('show-toast');
+                btn.style.background = "#155724"; // Feedback on the button
+                btn.innerText = "Link is Ready!";
 
+                // Hide it again after 3 seconds
                 setTimeout(() => {
-                    feedback.style.opacity = "0";
-                    btn.innerText = "Copy Game URL to Play";
+                    toast.classList.remove('show-toast');
+                    btn.innerText = "Get Browser URL";
                     btn.style.background = "#28a745";
                 }, 3000);
             });
