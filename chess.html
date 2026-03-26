@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Infinite Chess</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: sans-serif; }
+        canvas { display: block; cursor: grab; }
+        canvas:active { cursor: grabbing; }
+        #ui {
+            position: absolute; top: 10; left: 10; color: white;
+            background: rgba(0,0,0,0.7); padding: 15px; border-radius: 9px;
+            pointer-events: none; user-select: none;
+        }
+        .controls { font-size: 0.8em; opacity: 0.8; margin-top: 5px; }
+    </style>
+</head>
+<body>
+
+<div id="ui">
+    <div id="turn">Turn: White</div>
+    <div class="controls">Drag to Pan | Scroll to Zoom | Click to Move</div>
+</div>
+<canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const turnDisplay = document.getElementById('turn');
+
+let width, height;
+let cellSize = 60;
+let camera = { x: 0, y: 0, zoom: 1 };
+let isDragging = false;
+let lastMouse = { x: 0, y: 0 };
+
+let selectedPiece = null;
+let turn = 'white';
+
+// Piece Definitions (Unicode)
+const PIECES = {
+    white: { r: '♖', n: '♘', b: '♗', q: '♕', k: '♔', p: '♙' },
+    black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
+};
+
+let board = [];
+
+function initBoard() {
+    const layout = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
+    // White
+    for(let i=0; i<8; i++) {
+        board.push({ x: i, y: 7, type: layout[i], color: 'white' });
+        board.push({ x: i, y: 6, type: 'p', color: 'white' });
+    }
+    // Black
+    for(let i=0; i<8; i++) {
+        board.push({ x: i, y: 0, type: layout[i], color: 'black' });
+        board.push({ x: i, y: 1, type: 'p', color: 'black' });
+    }
+}
+
+function resize() {
+    width = canvas.width = window.innerWidth;
+    height = canvas.height = window.innerHeight;
+}
+
+window.addEventListener('resize', resize);
+resize();
+initBoard();
+
+// --- Coordinate Helpers ---
+function screenToWorld(sx, sy) {
+    return {
+        x: Math.floor((sx - width/2 - camera.x) / (cellSize * camera.zoom)),
+        y: Math.floor((sy - height/2 - camera.y) / (cellSize * camera.zoom))
+    };
+}
+
+// --- Rendering ---
+function draw() {
+    ctx.clearRect(0, 0, width, height);
+    
+    const viewStep = cellSize * camera.zoom;
+    const startX = Math.floor((-width/2 - camera.x) / viewStep);
+    const endX = Math.ceil((width/2 - camera.x) / viewStep);
+    const startY = Math.floor((-height/2 - camera.y) / viewStep);
+    const endY = Math.ceil((height/2 - camera.y) / viewStep);
+
+    // Draw Grid
+    for (let x = startX; x <= endX; x++) {
+        for (let y = startY; y <= endY; y++) {
+            ctx.fillStyle = (x + y) % 2 === 0 ? '#eee' : '#999';
+            ctx.fillRect(
+                width/2 + camera.x + x * viewStep,
+                height/2 + camera.y + y * viewStep,
+                viewStep, viewStep
+            );
+        }
+    }
+
+    // Draw Selection Highlight
+    if (selectedPiece) {
+        ctx.strokeStyle = '#ff0000';
+        ctx.lineWidth = 3;
+        ctx.strokeRect(
+            width/2 + camera.x + selectedPiece.x * viewStep,
+            height/2 + camera.y + selectedPiece.y * viewStep,
+            viewStep, viewStep
+        );
+    }
+
+    // Draw Pieces
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `${viewStep * 0.8}px serif`;
+    
+    board.forEach(p => {
+        ctx.fillStyle = 'black'; // Unicode handles its own color mostly, but for contrast:
+        ctx.fillText(
+            PIECES[p.color][p.type],
+            width/2 + camera.x + (p.x + 0.5) * viewStep,
+            height/2 + camera.y + (p.y + 0.5) * viewStep
+        );
+    });
+
+    requestAnimationFrame(draw);
+}
+
+// --- Input Handling ---
+canvas.addEventListener('mousedown', (e) => {
+    isDragging = false;
+    lastMouse = { x: e.clientX, y: e.clientY };
+});
+
+canvas.addEventListener('mousemove', (e) => {
+    if (e.buttons === 1) {
+        isDragging = true;
+        camera.x += e.clientX - lastMouse.x;
+        camera.y += e.clientY - lastMouse.y;
+        lastMouse = { x: e.clientX, y: e.clientY };
+    }
+});
+
+canvas.addEventListener('mouseup', (e) => {
+    if (!isDragging) {
+        const worldPos = screenToWorld(e.clientX, e.clientY);
+        handleCellClick(worldPos.x, worldPos.y);
+    }
+});
+
+canvas.addEventListener('wheel', (e) => {
+    const zoomSpeed = 0.1;
+    const delta = e.deltaY > 0 ? 1 - zoomSpeed : 1 + zoomSpeed;
+    camera.zoom *= delta;
+    camera.zoom = Math.max(0.1, Math.min(camera.zoom, 5));
+});
+
+function handleCellClick(x, y) {
+    const pieceAtPos = board.find(p => p.x === x && p.y === y);
+
+    if (selectedPiece) {
+        // Capture logic
+        if (pieceAtPos && pieceAtPos.color !== selectedPiece.color) {
+            board = board.filter(p => p !== pieceAtPos);
+            movePiece(x, y);
+        } 
+        // Move to empty space
+        else if (!pieceAtPos) {
+            movePiece(x, y);
+        }
+        // Deselect or Switch
+        else {
+            selectedPiece = pieceAtPos.color === turn ? pieceAtPos : null;
+        }
+    } else if (pieceAtPos && pieceAtPos.color === turn) {
+        selectedPiece = pieceAtPos;
+    }
+}
+
+function movePiece(x, y) {
+    selectedPiece.x = x;
+    selectedPiece.y = y;
+    selectedPiece = null;
+    turn = turn === 'white' ? 'black' : 'white';
+    turnDisplay.innerText = `Turn: ${turn.charAt(0).toUpperCase() + turn.slice(1)}`;
+}
+    //teste
+    ``
+draw();
+</script>
+</body>
+</html>
