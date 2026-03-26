@@ -23,37 +23,53 @@
             padding: 40px;
             border-radius: 15px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-            max-width: 400px;
         }
 
         h1 {
-            margin-bottom: 20px;
+            margin-bottom: 25px;
             font-size: 2.2em;
             color: #eee;
         }
 
-        .url-box {
-            background: #111;
-            padding: 15px;
-            border-radius: 8px;
-            border: 1px solid #444;
-            color: #00ff00;
-            font-family: monospace;
-            word-break: break-all;
-            margin: 20px 0;
-            font-size: 0.9em;
+        .copy-button {
+            display: inline-block;
+            padding: 18px 40px;
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 50px;
+            font-weight: bold;
+            font-size: 1.2em;
             cursor: pointer;
+            transition: transform 0.2s, background 0.2s;
+            box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
         }
 
+            .copy-button:hover {
+                background: #218838;
+                transform: scale(1.05);
+            }
+
+            .copy-button:active {
+                transform: scale(0.98);
+            }
+
         .info {
-            font-size: 0.95em;
-            color: #bbb;
+            margin-top: 25px;
+            font-size: 0.9em;
+            color: #888;
+            max-width: 320px;
             line-height: 1.5;
         }
 
-        .highlight {
-            color: #28a745;
+        #feedback {
+            margin-top: 15px;
+            font-size: 0.85em;
+            color: #00ff00;
             font-weight: bold;
+            height: 20px;
+            opacity: 0;
+            transition: opacity 0.3s;
         }
     </style>
 </head>
@@ -62,25 +78,36 @@
     <div class="container">
         <h1>Infinite Chess 2</h1>
 
-        <p class="info">Discord is blocking the game from loading scripts.</p>
+        <button class="copy-button" id="copyBtn">
+            Copy Game URL to Play
+        </button>
 
-        <p class="info">To play, <span class="highlight">copy the URL below</span> and paste it into Chrome or Firefox:</p>
+        <div id="feedback">URL Copied! Paste into Browser</div>
 
-        <div class="url-box" id="urlDisplay">
-            https://rujorio.github.io/chess.html
-        </div>
-
-        <p class="info" style="font-size: 0.8em; color: #666;">
-            Opening this directly in a browser fixes the "Firebase is not defined" error.
+        <p class="info">
+            Discord blocks internal loading. <br>
+            <b>Copy the link</b> and paste it into Chrome or Firefox to fix the "Firebase not defined" error.
         </p>
     </div>
 
     <script>
-        // Clicking the box copies the URL automatically
-        document.getElementById('urlDisplay').onclick = function () {
-            navigator.clipboard.writeText(this.innerText);
-            alert("URL copied! Now paste it into your browser address bar.");
-        }
+        const gameUrl = "https://rujorio.github.io/chess.html";
+        const btn = document.getElementById('copyBtn');
+        const feedback = document.getElementById('feedback');
+
+        btn.onclick = function () {
+            navigator.clipboard.writeText(gameUrl).then(() => {
+                feedback.style.opacity = "1";
+                btn.innerText = "Link Copied!";
+                btn.style.background = "#155724";
+
+                setTimeout(() => {
+                    feedback.style.opacity = "0";
+                    btn.innerText = "Copy Game URL to Play";
+                    btn.style.background = "#28a745";
+                }, 3000);
+            });
+        };
     </script>
 </body>
 </html>
