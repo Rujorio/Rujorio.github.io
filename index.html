@@ -3,9 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: 'unsafe-inline' 'unsafe-eval'; connect-src * wss:; script-src 'self' https://cdnjs.cloudflare.com 'unsafe-inline' 'unsafe-eval';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' https:; connect-src * wss:; script-src 'self' 'unsafe-inline' 'unsafe-eval';">
     <title>Infinite Chess</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+
+    <script src="peerjs.min.js"></script>
+
     <style>
         body {
             margin: 0;
@@ -35,6 +37,13 @@
             pointer-events: auto;
             z-index: 100;
             box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+        }
+
+        #status {
+            font-size: 0.85em;
+            color: #aaa;
+            margin-bottom: 5px;
+            font-weight: bold;
         }
 
         .controls {
@@ -67,25 +76,11 @@
             cursor: pointer;
             font-size: 0.8em;
             margin: 2px;
+            background: #555;
         }
 
         .btn-green {
             background: #28a745;
-        }
-
-        .btn-gray {
-            background: #555;
-        }
-
-        .btn-orange {
-            background: #d35400;
-        }
-
-        #status {
-            font-size: 0.85em;
-            color: #00ff00;
-            margin-bottom: 5px;
-            font-weight: bold;
         }
     </style>
 </head>
@@ -96,13 +91,11 @@
         <div class="controls">Drag to Pan | Scroll to Zoom</div>
         <div id="peer-area">
             <div id="status">Status: Initializing...</div>
-            <div style="display: flex; align-items: center; margin-bottom: 8px;">
-                <span id="my-id" style="font-size: 0.8em; color: #aaa;">ID: ...</span>
-                <button class="btn-gray" onclick="copyMyId()">Copy</button>
+            <div style="font-size: 0.8em; color: #888; margin-bottom: 5px;">
+                <span id="my-id">ID: ---</span>
             </div>
             <input type="text" id="remote-id" placeholder="Friend's ID">
             <button class="btn-green" onclick="connectToFriend()">Connect</button>
-            <button id="retry-btn" class="btn-orange" onclick="retryConnection()" style="display:none;">Retry Net</button>
         </div>
     </div>
 
@@ -111,16 +104,15 @@
     <script>
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
-        const turnDisplay = document.getElementById('turn');
         const statusDisplay = document.getElementById('status');
         const myIdDisplay = document.getElementById('my-id');
-        const retryBtn = document.getElementById('retry-btn');
+        const turnDisplay = document.getElementById('turn');
 
         let width, height, cellSize = 60;
         let camera = { x: 0, y: 0, zoom: 1 };
         let isDragging = false, lastMouse = { x: 0, y: 0 };
         let selectedPiece = null, turn = 'white', board = [];
-        let currentPeerId = "", peer = null, conn = null;
+        let peer = null, conn = null;
 
         const PIECES = {
             white: { r: '♖', n: '♘', b: '♗', q: '♕', k: '♔', p: '♙' },
@@ -128,34 +120,28 @@
         };
 
         function initPeer() {
-            if (peer) {
-                peer.off('open');
-                peer.off('error');
-                peer.off('connection');
-                peer.destroy();
+            if (typeof Peer === 'undefined') {
+                statusDisplay.innerText = "Error: peerjs.min.js missing!";
+                statusDisplay.style.color = "red";
+                return;
             }
 
-            // Using standard PeerJS cloud server (most reliable)
             peer = new Peer({
                 host: '0.peerjs.com',
                 port: 443,
                 secure: true,
-                debug: 3
+                debug: 1
             });
 
             peer.on('open', (id) => {
-                currentPeerId = id;
                 myIdDisplay.innerText = "ID: " + id;
                 statusDisplay.innerText = "Status: Online";
                 statusDisplay.style.color = "#00ff00";
-                retryBtn.style.display = "none";
             });
 
             peer.on('error', (err) => {
-                console.error("PeerJS Error Type:", err.type);
-                statusDisplay.innerText = "Status: " + err.type;
+                statusDisplay.innerText = "Net Error: " + err.type;
                 statusDisplay.style.color = "#ff4444";
-                retryBtn.style.display = "inline-block";
             });
 
             peer.on('connection', (c) => {
@@ -164,31 +150,7 @@
             });
         }
 
-        function retryConnection() {
-            statusDisplay.innerText = "Status: Retrying...";
-            statusDisplay.style.color = "#aaa";
-            initPeer();
-        }
-
-        function copyMyId() {
-            if (!currentPeerId) return;
-            navigator.clipboard.writeText(currentPeerId).then(() => {
-                const oldText = statusDisplay.innerText;
-                statusDisplay.innerText = "ID Copied!";
-                setTimeout(() => statusDisplay.innerText = oldText, 2000);
-            });
-        }
-
-        function connectToFriend() {
-            const id = document.getElementById('remote-id').value.trim();
-            if (!id || !peer) return;
-            statusDisplay.innerText = "Status: Linking...";
-            conn = peer.connect(id);
-            setupConnection();
-        }
-
         function setupConnection() {
-            if (!conn) return;
             conn.on('open', () => {
                 statusDisplay.innerText = "Status: Connected!";
                 conn.send({ type: 'sync', board: board, turn: turn });
@@ -197,6 +159,14 @@
                 if (data.type === 'move') applyMove(data.from, data.to);
                 if (data.type === 'sync') { board = data.board; turn = data.turn; updateTurnDisplay(); }
             });
+        }
+
+        function connectToFriend() {
+            const id = document.getElementById('remote-id').value.trim();
+            if (id) {
+                conn = peer.connect(id);
+                setupConnection();
+            }
         }
 
         function initBoard() {
@@ -208,6 +178,20 @@
                 board.push({ x: i, y: 0, type: layout[i], color: 'black' });
                 board.push({ x: i, y: 1, type: 'p', color: 'black' });
             }
+        }
+
+        function applyMove(from, to) {
+            const piece = board.find(p => p.x === from.x && p.y === from.y);
+            if (!piece) return;
+            board = board.filter(p => !(p.x === to.x && p.y === to.y));
+            piece.x = to.x; piece.y = to.y;
+            selectedPiece = null;
+            turn = (turn === 'white') ? 'black' : 'white';
+            updateTurnDisplay();
+        }
+
+        function updateTurnDisplay() {
+            turnDisplay.innerText = `Turn: ${turn.charAt(0).toUpperCase() + turn.slice(1)}`;
         }
 
         function resize() {
@@ -240,18 +224,6 @@
             });
             requestAnimationFrame(draw);
         }
-
-        function applyMove(from, to) {
-            const piece = board.find(p => p.x === from.x && p.y === from.y);
-            if (!piece) return;
-            board = board.filter(p => !(p.x === to.x && p.y === to.y));
-            piece.x = to.x; piece.y = to.y;
-            selectedPiece = null;
-            turn = (turn === 'white') ? 'black' : 'white';
-            updateTurnDisplay();
-        }
-
-        function updateTurnDisplay() { turnDisplay.innerText = `Turn: ${turn.charAt(0).toUpperCase() + turn.slice(1)}`; }
 
         function screenToWorld(pos) {
             return {
@@ -294,7 +266,9 @@
         initBoard();
         resize();
         draw();
-        initPeer();
+
+        // Wait 2 seconds for Discord proxy to stabilize
+        setTimeout(initPeer, 2000);
     </script>
 </body>
 </html>
