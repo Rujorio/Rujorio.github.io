@@ -3,9 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: 'unsafe-inline' 'unsafe-eval'; connect-src https: wss: *.peerjs.com wss://0.peerjs.com;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: 'unsafe-inline' 'unsafe-eval'; connect-src * wss:;">
     <title>Infinite Chess</title>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
+
     <style>
         body {
             margin: 0;
@@ -118,61 +120,7 @@
         let board = [];
         let currentPeerId = "";
 
-        // --- PEERJS LOGIC ---
-        // Using explicit public server config to help Discord find the network
-        const peer = new Peer();
-        let conn = null;
-
-        peer.on('open', (id) => {
-            currentPeerId = id;
-            myIdDisplay.innerText = "ID: " + id;
-            statusDisplay.innerText = "Status: Online";
-        });
-
-        peer.on('error', (err) => {
-            console.error("Peer Error:", err.type);
-            statusDisplay.innerText = "Status: Net Error (" + err.type + ")";
-            statusDisplay.style.color = "#ff4444";
-        });
-
-        peer.on('connection', (c) => {
-            conn = c;
-            setupConnection();
-        });
-
-        function copyMyId() {
-            if (!currentPeerId) return;
-            navigator.clipboard.writeText(currentPeerId);
-            const btn = document.querySelector('.copy');
-            btn.innerText = "Saved!";
-            setTimeout(() => btn.innerText = "Copy", 2000);
-        }
-
-        function connectToFriend() {
-            const id = document.getElementById('remote-id').value.trim();
-            if (!id) return;
-            statusDisplay.innerText = "Status: Linking...";
-            conn = peer.connect(id);
-            setupConnection();
-        }
-
-        function setupConnection() {
-            conn.on('open', () => {
-                statusDisplay.innerText = "Status: Connected!";
-                conn.send({ type: 'sync', board: board, turn: turn });
-            });
-            conn.on('data', (data) => {
-                if (data.type === 'move') applyMove(data.from, data.to);
-                if (data.type === 'sync') { board = data.board; turn = data.turn; updateTurnDisplay(); }
-            });
-        }
-
-        // --- GAME LOGIC ---
-        const PIECES = {
-            white: { r: '♖', n: '♘', b: '♗', q: '♕', k: '♔', p: '♙' },
-            black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
-        };
-
+        // --- 3. IMMEDIATE BOOT (Before PeerJS) ---
         function initBoard() {
             board = [];
             const layout = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
@@ -214,6 +162,58 @@
                 ctx.fillText(PIECES[p.color][p.type], width / 2 + camera.x + (p.x + 0.5) * vStep, height / 2 + camera.y + (p.y + 0.5) * vStep);
             });
             requestAnimationFrame(draw);
+        }
+
+        // --- 4. PEERJS LOGIC (Async) ---
+        const PIECES = {
+            white: { r: '♖', n: '♘', b: '♗', q: '♕', k: '♔', p: '♙' },
+            black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
+        };
+
+        const peer = new Peer();
+        let conn = null;
+
+        peer.on('open', (id) => {
+            currentPeerId = id;
+            myIdDisplay.innerText = "ID: " + id;
+            statusDisplay.innerText = "Status: Online";
+        });
+
+        peer.on('error', (err) => {
+            statusDisplay.innerText = "Status: Net Error (" + err.type + ")";
+            statusDisplay.style.color = "#ff4444";
+        });
+
+        peer.on('connection', (c) => {
+            conn = c;
+            setupConnection();
+        });
+
+        function copyMyId() {
+            if (!currentPeerId) return;
+            navigator.clipboard.writeText(currentPeerId);
+            const btn = document.querySelector('.copy');
+            btn.innerText = "Saved!";
+            setTimeout(() => btn.innerText = "Copy", 2000);
+        }
+
+        function connectToFriend() {
+            const id = document.getElementById('remote-id').value.trim();
+            if (!id) return;
+            statusDisplay.innerText = "Status: Linking...";
+            conn = peer.connect(id);
+            setupConnection();
+        }
+
+        function setupConnection() {
+            conn.on('open', () => {
+                statusDisplay.innerText = "Status: Connected!";
+                conn.send({ type: 'sync', board: board, turn: turn });
+            });
+            conn.on('data', (data) => {
+                if (data.type === 'move') applyMove(data.from, data.to);
+                if (data.type === 'sync') { board = data.board; turn = data.turn; updateTurnDisplay(); }
+            });
         }
 
         function applyMove(from, to) {
@@ -267,8 +267,9 @@
             camera.zoom = Math.max(0.1, Math.min(camera.zoom, 5));
         });
 
-        // Initialize immediately
+        // EXECUTE IMMEDIATELY
         initBoard();
+        resize();
         draw();
     </script>
 </body>
