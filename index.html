@@ -3,11 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval'; script-src * 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com; connect-src * https://*.firebaseio.com https://*.firebasedatabase.app wss://*.firebasedatabase.app;">
     <title>Infinite Chess 2</title>
 
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+    <script>
+        /* PASTE FULL FIREBASE-APP-COMPAT.JS CODE HERE */
+    </script>
+
+    <script>
+        /* PASTE FULL FIREBASE-DATABASE-COMPAT.JS CODE HERE */
+    </script>
 
     <style>
         body {
@@ -37,7 +41,6 @@
             border-radius: 9px;
             z-index: 100;
             box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-            pointer-events: auto;
             min-width: 180px;
         }
 
@@ -92,8 +95,7 @@
     <div id="ui">
         <div id="turn">Turn: White</div>
         <div class="controls">Drag to Pan | Scroll to Zoom</div>
-        <div id="status">Status: Hosting...</div>
-
+        <div id="status">Status: Connecting...</div>
         <div id="lobby-list">
             <span class="lobby-label">Available Games:</span>
             <div id="rooms-container"></div>
@@ -113,6 +115,7 @@
             appId: "1:1048494437159:web:f471c57a71d361c3982f02"
         };
 
+        // Initialize Firebase
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
 
@@ -136,8 +139,6 @@
             black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
         };
 
-        // --- IMPROVED LOBBY LOGIC ---
-
         function initAsHost(id) {
             if (roomRef) roomRef.off();
             currentRoomId = id;
@@ -159,16 +160,19 @@
                     turn = data.turn || 'white';
                     updateTurnDisplay();
                     statusDisplay.innerText = "Status: Hosting (" + id + ")";
+                    statusDisplay.style.color = "#00ff00";
                 }
             });
         }
 
         function joinOtherRoom(targetId) {
+            // Remove our hosted room before joining another
             db.ref('rooms/' + currentRoomId).remove().then(() => {
                 if (roomRef) roomRef.off();
                 currentRoomId = targetId;
                 roomRef = db.ref('rooms/' + targetId);
                 statusDisplay.innerText = "Status: Joined " + targetId;
+                statusDisplay.style.color = "#00bfff";
 
                 roomRef.on('value', (snapshot) => {
                     const data = snapshot.val();
@@ -181,7 +185,6 @@
             });
         }
 
-        // Global listener for the lobby list
         db.ref('rooms').on('value', (snapshot) => {
             roomsContainer.innerHTML = "";
             let count = 0;
@@ -204,8 +207,6 @@
                 roomsContainer.innerHTML = "<span style='font-size:0.7em; color:#666;'>Searching for players...</span>";
             }
         });
-
-        // --- GAME LOGIC ---
 
         function syncToFirebase() {
             if (roomRef) roomRef.update({ board, turn });
