@@ -121,7 +121,7 @@
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
 
-        // 2. VARIABLES
+        // 2. GLOBALS
         let myRoomId = Math.floor(1000 + Math.random() * 9000).toString();
         let currentRoomId = myRoomId;
         let roomRef = null;
@@ -136,17 +136,16 @@
         let camera = { x: 0, y: 0, zoom: 1 };
         let isDragging = false, lastMouse = { x: 0, y: 0 };
         let touchStartPos = { x: 0, y: 0 };
-        let touchThreshold = 10;
-        let selectedPiece = null, turn = 'white', board = [];
         let initialPinchDist = null;
         let lastZoom = 1;
+        let selectedPiece = null, turn = 'white', board = [];
 
         const PIECES = {
             white: { r: '♖', n: '♘', b: '♗', q: '♕', k: '♔', p: '♙' },
             black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
         };
 
-        // 3. CORE FUNCTIONS
+        // 3. LOGIC
         function initBoard() {
             board = [];
             const layout = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
@@ -162,9 +161,18 @@
             if (roomRef) roomRef.update({ board, turn });
         }
 
+        function screenToWorld(clientX, clientY) {
+            const rect = canvas.getBoundingClientRect();
+            const x = clientX - rect.left;
+            const y = clientY - rect.top;
+            return {
+                x: Math.floor((x - width / 2 - camera.x) / (cellSize * camera.zoom)),
+                y: Math.floor((y - height / 2 - camera.y) / (cellSize * camera.zoom))
+            };
+        }
+
         function handleGameClick(worldPos) {
             const pieceAtPos = board.find(p => p.x === worldPos.x && p.y === worldPos.y);
-
             if (selectedPiece) {
                 if (!pieceAtPos || pieceAtPos.color !== selectedPiece.color) {
                     const piece = board.find(p => p.x === selectedPiece.x && p.y === selectedPiece.y);
@@ -184,22 +192,7 @@
             }
         }
 
-        function screenToWorld(pos) {
-            const rect = canvas.getBoundingClientRect();
-
-            // 1. Get the mouse position relative to the canvas element
-            const x = pos.x - rect.left;
-            const y = pos.y - rect.top;
-
-            // 2. Adjust for the "Camera Center" (width/2) and the Camera Offset
-            // We use canvas.width instead of the 'width' variable to be 100% sure
-            return {
-                x: Math.floor((x - canvas.width / 2 - camera.x) / (cellSize * camera.zoom)),
-                y: Math.floor((y - canvas.height / 2 - camera.y) / (cellSize * camera.zoom))
-            };
-        }
-
-        // 4. NETWORKING (Host/Join)
+        // 4. NETWORKING
         function initAsHost(id) {
             if (roomRef) roomRef.off();
             currentRoomId = id;
@@ -254,31 +247,25 @@
             turnDisplay.innerText = `Turn: ${turn.charAt(0).toUpperCase() + turn.slice(1)}`;
         }
 
-        // 5. RENDERING
+        // 5. DRAW
         function resize() {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-            // Don't forget to update these global variables too
-            width = canvas.width;
-            height = canvas.height;
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
         }
 
         function draw() {
             ctx.clearRect(0, 0, width, height);
             const vStep = cellSize * camera.zoom;
-
             for (let x = Math.floor((-width / 2 - camera.x) / vStep); x <= Math.ceil((width / 2 - camera.x) / vStep); x++) {
                 for (let y = Math.floor((-height / 2 - camera.y) / vStep); y <= Math.ceil((height / 2 - camera.y) / vStep); y++) {
                     ctx.fillStyle = (x + y) % 2 === 0 ? '#eee' : '#999';
                     ctx.fillRect(width / 2 + camera.x + x * vStep, height / 2 + camera.y + y * vStep, vStep, vStep);
                 }
             }
-
             if (selectedPiece) {
                 ctx.strokeStyle = '#ff0000'; ctx.lineWidth = 3;
                 ctx.strokeRect(width / 2 + camera.x + selectedPiece.x * vStep, height / 2 + camera.y + selectedPiece.y * vStep, vStep, vStep);
             }
-
             ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = `${vStep * 0.8}px serif`;
             board.forEach(p => {
                 ctx.fillStyle = 'black';
@@ -287,10 +274,9 @@
             requestAnimationFrame(draw);
         }
 
-        // 6. INPUT LISTENERS (Mouse + Touch)
+        // 6. INPUTS
         window.addEventListener('resize', resize);
 
-        // Mouse Listeners
         canvas.addEventListener('mousedown', (e) => {
             isDragging = false;
             lastMouse = { x: e.clientX, y: e.clientY };
@@ -304,89 +290,43 @@
             }
         });
         canvas.addEventListener('mouseup', (e) => {
-            if (!isDragging) {
-                // Just pass the raw client coordinates
-                handleGameClick(screenToWorld({ x: e.clientX, y: e.clientY }));
-            }
+            if (!isDragging) handleGameClick(screenToWorld(e.clientX, e.clientY));
         });
 
-        // Touch Listeners
         canvas.addEventListener('touchstart', (e) => {
             if (e.cancelable) e.preventDefault();
-
             if (e.touches.length === 1) {
-                // Single finger: Setup for Drag/Click
-                const touch = e.touches[0];
                 isDragging = false;
-                touchStartPos = { x: touch.clientX, y: touch.clientY };
-                lastMouse = { x: touch.clientX, y: touch.clientY };
-                initialPinchDist = null; // Clear pinch data
+                touchStartPos = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                lastMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+                initialPinchDist = null;
             } else if (e.touches.length === 2) {
-                // Two fingers: Setup for Zoom
-                isDragging = true; // Prevents accidental piece moves
-                initialPinchDist = Math.hypot(
-                    e.touches[0].clientX - e.touches[1].clientX,
-                    e.touches[0].clientY - e.touches[1].clientY
-                );
+                isDragging = true;
+                initialPinchDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
                 lastZoom = camera.zoom;
             }
         }, { passive: false });
 
         canvas.addEventListener('touchmove', (e) => {
             if (e.cancelable) e.preventDefault();
-
             if (e.touches.length === 1 && !initialPinchDist) {
-                // DRAGGING LOGIC
-                const touch = e.touches[0];
-                const movementX = touch.clientX - lastMouse.x;
-                const movementY = touch.clientY - lastMouse.y;
-
-                camera.x += movementX;
-                camera.y += movementY;
-
-                if (Math.hypot(touch.clientX - touchStartPos.x, touch.clientY - touchStartPos.y) > 10) {
-                    isDragging = true;
-                }
-                lastMouse = { x: touch.clientX, y: touch.clientY };
-
-            } else if (e.touches.length === 2) {
-                // ZOOMING LOGIC
-                const currentDist = Math.hypot(
-                    e.touches[0].clientX - e.touches[1].clientX,
-                    e.touches[0].clientY - e.touches[1].clientY
-                );
-
-                if (initialPinchDist) {
-                    // Calculate how much to change the zoom based on finger spread
-                    const zoomFactor = currentDist / initialPinchDist;
-                    camera.zoom = lastZoom * zoomFactor;
-
-                    // Keep zoom within a playable range
-                    camera.zoom = Math.max(0.15, Math.min(camera.zoom, 4));
-                }
+                camera.x += e.touches[0].clientX - lastMouse.x;
+                camera.y += e.touches[0].clientY - lastMouse.y;
+                if (Math.hypot(e.touches[0].clientX - touchStartPos.x, e.touches[0].clientY - touchStartPos.y) > 10) isDragging = true;
+                lastMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            } else if (e.touches.length === 2 && initialPinchDist) {
+                const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+                camera.zoom = Math.max(0.15, Math.min(lastZoom * (dist / initialPinchDist), 4));
             }
         }, { passive: false });
 
         canvas.addEventListener('touchend', (e) => {
-            if (e.touches.length === 0 && !isDragging) {
-                // Just pass the raw touch start coordinates
-                handleGameClick(screenToWorld({ x: touchStartPos.x, y: touchStartPos.y }));
-            }
-        });
-
-            // Only register a click if NO dragging or zooming happened
-            if (e.touches.length === 0 && !isDragging) {
-                const rect = canvas.getBoundingClientRect();
-                handleGameClick(screenToWorld({
-                    x: touchStartPos.x - rect.left,
-                    y: touchStartPos.y - rect.top
-                }));
-            }
+            if (e.touches.length < 2) initialPinchDist = null;
+            if (e.touches.length === 0 && !isDragging) handleGameClick(screenToWorld(touchStartPos.x, touchStartPos.y));
         }, { passive: false });
 
         canvas.addEventListener('wheel', (e) => {
-            camera.zoom *= (e.deltaY > 0 ? 0.9 : 1.1);
-            camera.zoom = Math.max(0.1, Math.min(camera.zoom, 5));
+            camera.zoom = Math.max(0.1, Math.min(camera.zoom * (e.deltaY > 0 ? 0.9 : 1.1), 5));
         });
 
         // 7. START
