@@ -5,9 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: 'unsafe-inline' 'unsafe-eval'; connect-src * wss:;">
     <title>Infinite Chess</title>
-
     <script src="peerjs.min.js"></script>
-
     <style>
         body {
             margin: 0;
@@ -62,7 +60,6 @@
         }
 
         button {
-            background: #28a745;
             border: none;
             color: white;
             padding: 6px 10px;
@@ -72,10 +69,17 @@
             margin: 2px;
         }
 
-            button.copy {
-                background: #555;
-                margin-left: 5px;
-            }
+        .btn-green {
+            background: #28a745;
+        }
+
+        .btn-gray {
+            background: #555;
+        }
+
+        .btn-orange {
+            background: #d35400;
+        }
 
         #status {
             font-size: 0.85em;
@@ -94,10 +98,11 @@
             <div id="status">Status: Initializing...</div>
             <div style="display: flex; align-items: center; margin-bottom: 8px;">
                 <span id="my-id" style="font-size: 0.8em; color: #aaa;">ID: ...</span>
-                <button class="copy" onclick="copyMyId()">Copy</button>
+                <button class="btn-gray" onclick="copyMyId()">Copy</button>
             </div>
             <input type="text" id="remote-id" placeholder="Friend's ID">
-            <button onclick="connectToFriend()">Connect</button>
+            <button class="btn-green" onclick="connectToFriend()">Connect</button>
+            <button id="retry-btn" class="btn-orange" onclick="retryConnection()" style="display:none;">Retry Net</button>
         </div>
     </div>
 
@@ -109,18 +114,84 @@
         const turnDisplay = document.getElementById('turn');
         const statusDisplay = document.getElementById('status');
         const myIdDisplay = document.getElementById('my-id');
+        const retryBtn = document.getElementById('retry-btn');
 
-        let width, height;
-        let cellSize = 60;
+        let width, height, cellSize = 60;
         let camera = { x: 0, y: 0, zoom: 1 };
-        let isDragging = false;
-        let lastMouse = { x: 0, y: 0 };
-        let selectedPiece = null;
-        let turn = 'white';
-        let board = [];
-        let currentPeerId = "";
+        let isDragging = false, lastMouse = { x: 0, y: 0 };
+        let selectedPiece = null, turn = 'white', board = [];
+        let currentPeerId = "", peer = null, conn = null;
 
-        // --- 3. IMMEDIATE BOOT (Before PeerJS) ---
+        const PIECES = {
+            white: { r: '♖', n: '♘', b: '♗', q: '♕', k: '♔', p: '♙' },
+            black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
+        };
+
+        function initPeer() {
+            if (peer) peer.destroy();
+
+            // Hardened config for Discord Proxy
+            peer = new Peer({
+                host: '0.peerjs.com',
+                port: 443,
+                secure: true,
+                pingInterval: 3000,
+                debug: 1
+            });
+
+            peer.on('open', (id) => {
+                currentPeerId = id;
+                myIdDisplay.innerText = "ID: " + id;
+                statusDisplay.innerText = "Status: Online";
+                statusDisplay.style.color = "#00ff00";
+                retryBtn.style.display = "none";
+            });
+
+            peer.on('error', (err) => {
+                console.error(err);
+                statusDisplay.innerText = "Status: " + err.type;
+                statusDisplay.style.color = "#ff4444";
+                retryBtn.style.display = "inline-block";
+            });
+
+            peer.on('connection', (c) => {
+                conn = c;
+                setupConnection();
+            });
+        }
+
+        function retryConnection() {
+            statusDisplay.innerText = "Status: Retrying...";
+            statusDisplay.style.color = "#aaa";
+            initPeer();
+        }
+
+        function copyMyId() {
+            if (!currentPeerId) return;
+            navigator.clipboard.writeText(currentPeerId);
+            statusDisplay.innerText = "ID Copied!";
+            setTimeout(() => statusDisplay.innerText = "Status: Online", 2000);
+        }
+
+        function connectToFriend() {
+            const id = document.getElementById('remote-id').value.trim();
+            if (!id) return;
+            statusDisplay.innerText = "Status: Linking...";
+            conn = peer.connect(id);
+            setupConnection();
+        }
+
+        function setupConnection() {
+            conn.on('open', () => {
+                statusDisplay.innerText = "Status: Connected!";
+                conn.send({ type: 'sync', board: board, turn: turn });
+            });
+            conn.on('data', (data) => {
+                if (data.type === 'move') applyMove(data.from, data.to);
+                if (data.type === 'sync') { board = data.board; turn = data.turn; updateTurnDisplay(); }
+            });
+        }
+
         function initBoard() {
             board = [];
             const layout = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
@@ -164,64 +235,6 @@
             requestAnimationFrame(draw);
         }
 
-        // --- 4. PEERJS LOGIC (Async) ---
-        const PIECES = {
-            white: { r: '♖', n: '♘', b: '♗', q: '♕', k: '♔', p: '♙' },
-            black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
-        };
-
-        const peer = new Peer({
-            host: '0.peerjs.com',
-            port: 443,
-            secure: true,
-            pingInterval: 3000, // Keeps the connection alive in the sandbox
-            debug: 2
-        });
-        let conn = null;
-
-        peer.on('open', (id) => {
-            currentPeerId = id;
-            myIdDisplay.innerText = "ID: " + id;
-            statusDisplay.innerText = "Status: Online";
-        });
-
-        peer.on('error', (err) => {
-            statusDisplay.innerText = "Status: Net Error (" + err.type + ")";
-            statusDisplay.style.color = "#ff4444";
-        });
-
-        peer.on('connection', (c) => {
-            conn = c;
-            setupConnection();
-        });
-
-        function copyMyId() {
-            if (!currentPeerId) return;
-            navigator.clipboard.writeText(currentPeerId);
-            const btn = document.querySelector('.copy');
-            btn.innerText = "Saved!";
-            setTimeout(() => btn.innerText = "Copy", 2000);
-        }
-
-        function connectToFriend() {
-            const id = document.getElementById('remote-id').value.trim();
-            if (!id) return;
-            statusDisplay.innerText = "Status: Linking...";
-            conn = peer.connect(id);
-            setupConnection();
-        }
-
-        function setupConnection() {
-            conn.on('open', () => {
-                statusDisplay.innerText = "Status: Connected!";
-                conn.send({ type: 'sync', board: board, turn: turn });
-            });
-            conn.on('data', (data) => {
-                if (data.type === 'move') applyMove(data.from, data.to);
-                if (data.type === 'sync') { board = data.board; turn = data.turn; updateTurnDisplay(); }
-            });
-        }
-
         function applyMove(from, to) {
             const piece = board.find(p => p.x === from.x && p.y === from.y);
             if (!piece) return;
@@ -241,7 +254,6 @@
             };
         }
 
-        // Input Handlers
         window.addEventListener('resize', resize);
         canvas.addEventListener('mousedown', (e) => { isDragging = false; lastMouse = { x: e.clientX, y: e.clientY }; });
         canvas.addEventListener('mousemove', (e) => {
@@ -273,10 +285,10 @@
             camera.zoom = Math.max(0.1, Math.min(camera.zoom, 5));
         });
 
-        // EXECUTE IMMEDIATELY
         initBoard();
         resize();
         draw();
+        initPeer();
     </script>
 </body>
 </html>
