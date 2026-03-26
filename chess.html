@@ -25,7 +25,7 @@
             height: 100vh;
             z-index: 1;
             /* NEW: Prevents mobile "pull-to-refresh" and accidental zooming */
-            touch-action: none;
+            touch-action: none !important;
             user-select: none;
             -webkit-user-select: none;
         }
@@ -139,6 +139,7 @@
         let touchThreshold = 10;
         let selectedPiece = null, turn = 'white', board = [];
         let initialPinchDist = null;
+        let lastZoom = 1;
 
         const PIECES = {
             white: { r: '♖', n: '♘', b: '♗', q: '♕', k: '♔', p: '♙' },
@@ -303,18 +304,20 @@
             if (e.cancelable) e.preventDefault();
 
             if (e.touches.length === 1) {
-                // Single finger: Prep for dragging/clicking
+                // Single finger: Setup for Drag/Click
                 const touch = e.touches[0];
                 isDragging = false;
                 touchStartPos = { x: touch.clientX, y: touch.clientY };
                 lastMouse = { x: touch.clientX, y: touch.clientY };
+                initialPinchDist = null; // Clear pinch data
             } else if (e.touches.length === 2) {
-                // Two fingers: Prep for zooming
-                isDragging = true; // Block clicking while zooming
+                // Two fingers: Setup for Zoom
+                isDragging = true; // Prevents accidental piece moves
                 initialPinchDist = Math.hypot(
                     e.touches[0].clientX - e.touches[1].clientX,
                     e.touches[0].clientY - e.touches[1].clientY
                 );
+                lastZoom = camera.zoom;
             }
         }, { passive: false });
 
@@ -322,7 +325,7 @@
             if (e.cancelable) e.preventDefault();
 
             if (e.touches.length === 1 && !initialPinchDist) {
-                // Single finger dragging logic
+                // DRAGGING LOGIC
                 const touch = e.touches[0];
                 const movementX = touch.clientX - lastMouse.x;
                 const movementY = touch.clientY - lastMouse.y;
@@ -330,36 +333,36 @@
                 camera.x += movementX;
                 camera.y += movementY;
 
-                if (Math.hypot(touch.clientX - touchStartPos.x, touch.clientY - touchStartPos.y) > 5) {
+                if (Math.hypot(touch.clientX - touchStartPos.x, touch.clientY - touchStartPos.y) > 10) {
                     isDragging = true;
                 }
                 lastMouse = { x: touch.clientX, y: touch.clientY };
 
             } else if (e.touches.length === 2) {
-                // Two finger zooming logic
+                // ZOOMING LOGIC
                 const currentDist = Math.hypot(
                     e.touches[0].clientX - e.touches[1].clientX,
                     e.touches[0].clientY - e.touches[1].clientY
                 );
 
                 if (initialPinchDist) {
-                    const pinchRatio = currentDist / initialPinchDist;
-                    camera.zoom *= pinchRatio;
+                    // Calculate how much to change the zoom based on finger spread
+                    const zoomFactor = currentDist / initialPinchDist;
+                    camera.zoom = lastZoom * zoomFactor;
 
-                    // Limit zoom so you don't get lost
-                    camera.zoom = Math.max(0.2, Math.min(camera.zoom, 3));
-
-                    // Update initial distance for smooth continuous scaling
-                    initialPinchDist = currentDist;
+                    // Keep zoom within a playable range
+                    camera.zoom = Math.max(0.15, Math.min(camera.zoom, 4));
                 }
             }
         }, { passive: false });
 
         canvas.addEventListener('touchend', (e) => {
+            // If we go from 2 fingers back to 1, reset pinch data so it doesn't "jump"
             if (e.touches.length < 2) {
-                initialPinchDist = null; // Reset zoom tracking when a finger is lifted
+                initialPinchDist = null;
             }
 
+            // Only register a click if NO dragging or zooming happened
             if (e.touches.length === 0 && !isDragging) {
                 const rect = canvas.getBoundingClientRect();
                 handleGameClick(screenToWorld({
