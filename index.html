@@ -4,12 +4,12 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src * 'unsafe-inline' 'unsafe-eval' data: blob: https://www.gstatic.com; connect-src * 'unsafe-inline' https: wss:; img-src * data:; style-src * 'unsafe-inline';">
+    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; connect-src 'self' https: wss:; img-src * data:; style-src * 'unsafe-inline';">
 
     <title>Infinite Chess 2</title>
 
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+    <script src="/gstatic/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="/gstatic/firebasejs/9.22.0/firebase-database-compat.js"></script>
 
     <style>
         body {
@@ -108,10 +108,10 @@
     <canvas id="gameCanvas"></canvas>
 
     <script>
-        // Check if scripts loaded before running
         function startFirebase() {
+            // Check if scripts are defined (they should be now via the /gstatic proxy)
             if (typeof firebase === 'undefined') {
-                document.getElementById('status').innerText = "Status: Script Error - Retrying...";
+                document.getElementById('status').innerText = "Status: Proxy Error - Retrying...";
                 setTimeout(startFirebase, 1000);
                 return;
             }
@@ -119,7 +119,8 @@
             const firebaseConfig = {
                 apiKey: "AIzaSyCkwChcME83CiH_D7RbO9kYD0sBPYcCl6Y",
                 authDomain: "chess-2-2a1c9.firebaseapp.com",
-                databaseURL: "https://chess-2-2a1c9-default-rtdb.europe-west1.firebasedatabase.app",
+                // Updated to use the /firebase mapping
+                databaseURL: location.origin + "/firebase",
                 projectId: "chess-2-2a1c9",
                 storageBucket: "chess-2-2a1c9.appspot.com",
                 messagingSenderId: "1048494437159",
@@ -324,7 +325,7 @@
             draw();
         }
 
-        // Start the process
+        // Run the initialization
         startFirebase();
     </script>
 </body>
