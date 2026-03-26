@@ -32,7 +32,6 @@
             color: #eee;
         }
 
-        /* The QR Code Image */
         .qr-frame {
             background: white;
             padding: 15px;
@@ -68,11 +67,6 @@
             margin-top: 15px;
             line-height: 1.4;
         }
-
-        .highlight {
-            color: #28a745;
-            font-weight: bold;
-        }
     </style>
 </head>
 <body>
@@ -82,7 +76,7 @@
         <p class="info">Scan to play on mobile or bypass Discord blocks.</p>
 
         <div class="qr-frame">
-            <img src="https://quickchart.io/qr?text=https://rujorio.github.io/chess.html&size=180" alt="Game QR Code">
+            <img src="qr.png" alt="Scan to play">
         </div>
 
         <p style="font-size: 0.9em; margin-top: 10px;">Or manually copy/paste:</p>
@@ -90,12 +84,12 @@
                value="https://rujorio.github.io/chess.html" readonly>
 
         <p class="info">
-            Pasting this into <b>Chrome</b> fixes the <span class="highlight">"Firebase is not defined"</span> error.
+            Pasting this into <b>Chrome</b> fixes the "Firebase not defined" error.
         </p>
     </div>
 
     <script>
-        // Simple selection fall-back
+        // Clicking the box selects all text for easy copying
         document.getElementById('gameUrl').onclick = function () {
             this.select();
         };
