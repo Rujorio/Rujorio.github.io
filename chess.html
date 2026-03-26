@@ -163,12 +163,17 @@
 
         function screenToWorld(clientX, clientY) {
             const rect = canvas.getBoundingClientRect();
-            const x = clientX - rect.left;
-            const y = clientY - rect.top;
-            return {
-                x: Math.floor((x - width / 2 - camera.x) / (cellSize * camera.zoom)),
-                y: Math.floor((y - height / 2 - camera.y) / (cellSize * camera.zoom))
-            };
+
+            // 1. Get exact position relative to the top-left of the canvas
+            const canvasX = clientX - rect.left;
+            const canvasY = clientY - rect.top;
+
+            // 2. Translate screen pixels into board coordinates
+            // We must use the current zoom level to "shrink" the click distance
+            const worldX = Math.floor((canvasX - (width / 2) - camera.x) / (cellSize * camera.zoom));
+            const worldY = Math.floor((canvasY - (height / 2) - camera.y) / (cellSize * camera.zoom));
+
+            return { x: worldX, y: worldY };
         }
 
         function handleGameClick(worldPos) {
@@ -249,8 +254,10 @@
 
         // 5. DRAW
         function resize() {
-            width = canvas.width = window.innerWidth;
-            height = canvas.height = window.innerHeight;
+            // Use clientWidth/Height instead of window.innerWidth/Height
+            // This gets the REAL space available for the game
+            width = canvas.width = document.documentElement.clientWidth;
+            height = canvas.height = document.documentElement.clientHeight;
         }
 
         function draw() {
