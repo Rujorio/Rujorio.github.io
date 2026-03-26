@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: 'unsafe-inline' 'unsafe-eval'; connect-src * wss:;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: 'unsafe-inline' 'unsafe-eval'; connect-src * wss:; script-src 'self' https://cdnjs.cloudflare.com 'unsafe-inline' 'unsafe-eval';">
     <title>Infinite Chess</title>
-    <script src="peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
     <style>
         body {
             margin: 0;
@@ -128,13 +128,18 @@
         };
 
         function initPeer() {
-            if (peer) peer.destroy();
+            if (peer) {
+                peer.off('open');
+                peer.off('error');
+                peer.off('connection');
+                peer.destroy();
+            }
 
+            // Using standard PeerJS cloud server (most reliable)
             peer = new Peer({
-                host: 'peerjs-server.herokuapp.com',
+                host: '0.peerjs.com',
                 port: 443,
                 secure: true,
-                pingInterval: 3000,
                 debug: 3
             });
 
@@ -167,20 +172,23 @@
 
         function copyMyId() {
             if (!currentPeerId) return;
-            navigator.clipboard.writeText(currentPeerId);
-            statusDisplay.innerText = "ID Copied!";
-            setTimeout(() => statusDisplay.innerText = "Status: Online", 2000);
+            navigator.clipboard.writeText(currentPeerId).then(() => {
+                const oldText = statusDisplay.innerText;
+                statusDisplay.innerText = "ID Copied!";
+                setTimeout(() => statusDisplay.innerText = oldText, 2000);
+            });
         }
 
         function connectToFriend() {
             const id = document.getElementById('remote-id').value.trim();
-            if (!id) return;
+            if (!id || !peer) return;
             statusDisplay.innerText = "Status: Linking...";
             conn = peer.connect(id);
             setupConnection();
         }
 
         function setupConnection() {
+            if (!conn) return;
             conn.on('open', () => {
                 statusDisplay.innerText = "Status: Connected!";
                 conn.send({ type: 'sync', board: board, turn: turn });
@@ -208,7 +216,6 @@
         }
 
         function draw() {
-            if (!width) resize();
             ctx.clearRect(0, 0, width, height);
             const vStep = cellSize * camera.zoom;
             const sX = Math.floor((-width / 2 - camera.x) / vStep);
