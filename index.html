@@ -170,7 +170,13 @@
             black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
         };
 
-        const peer = new Peer();
+        const peer = new Peer({
+            host: '0.peerjs.com',
+            port: 443,
+            secure: true,
+            pingInterval: 3000, // Keeps the connection alive in the sandbox
+            debug: 2
+        });
         let conn = null;
 
         peer.on('open', (id) => {
