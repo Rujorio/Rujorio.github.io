@@ -2,192 +2,211 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Infinite Chess</title>
+    <title>Infinite Chess Multiplayer</title>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <style>
-        body { margin: 0; overflow: hidden; background: #1a1a1a; font-family: sans-serif; }
-        canvas { display: block; cursor: grab; }
-        canvas:active { cursor: grabbing; }
-        #ui {
-            position: absolute; top: 10; left: 10; color: white;
-            background: rgba(0,0,0,0.7); padding: 15px; border-radius: 9px;
-            pointer-events: none; user-select: none;
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #1a1a1a;
+            font-family: sans-serif;
         }
-        .controls { font-size: 0.8em; opacity: 0.8; margin-top: 5px; }
+
+        canvas {
+            display: block;
+            cursor: grab;
+        }
+
+        #ui {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            background: rgba(0,0,0,0.85);
+            padding: 15px;
+            border-radius: 8px;
+            pointer-events: auto;
+            z-index: 10;
+        }
+
+        input {
+            background: #333;
+            color: white;
+            border: 1px solid #555;
+            padding: 5px;
+            margin: 5px 0;
+            width: 150px;
+        }
+
+        button {
+            cursor: pointer;
+            padding: 5px 10px;
+            background: #4CAF50;
+            border: none;
+            color: white;
+            border-radius: 3px;
+        }
+
+        .status {
+            font-size: 0.8em;
+            color: #aaa;
+            margin-top: 5px;
+        }
     </style>
 </head>
 <body>
 
-<div id="ui">
-    <div id="turn">Turn: White</div>
-    <div class="controls">Drag to Pan | Scroll to Zoom | Click to Move</div>
-</div>
-<canvas id="gameCanvas"></canvas>
+    <div id="ui">
+        <div id="turn">Status: Disconnected</div>
+        <div id="setup">
+            <p>Your ID: <b id="my-id">...</b></p>
+            <input type="text" id="join-id" placeholder="Friend's ID">
+            <button onclick="connectToFriend()">Connect</button>
+        </div>
+        <div class="status">Drag to Pan | Scroll to Zoom</div>
+    </div>
+    <canvas id="gameCanvas"></canvas>
 
-<script>
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-const turnDisplay = document.getElementById('turn');
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const turnDisplay = document.getElementById('turn');
+        const myIdDisplay = document.getElementById('my-id');
 
-let width, height;
-let cellSize = 60;
-let camera = { x: 0, y: 0, zoom: 1 };
-let isDragging = false;
-let lastMouse = { x: 0, y: 0 };
+        let width, height, board = [];
+        let cellSize = 60;
+        let camera = { x: 0, y: 0, zoom: 1 };
+        let isDragging = false, lastMouse = { x: 0, y: 0 };
+        let selectedPiece = null;
+        let turn = 'white';
+        let myColor = null; // Set when connecting
 
-let selectedPiece = null;
-let turn = 'white';
+        // Networking
+        const peer = new Peer();
+        let conn = null;
 
-// Piece Definitions (Unicode)
-const PIECES = {
-    white: { r: '♖', n: '♘', b: '♗', q: '♕', k: '♔', p: '♙' },
-    black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
-};
+        peer.on('open', (id) => { myIdDisplay.innerText = id; });
 
-let board = [];
+        // Acting as the Host
+        peer.on('connection', (connection) => {
+            conn = connection;
+            myColor = 'white';
+            setupConn();
+            turnDisplay.innerText = "Connected! You are White";
+        });
 
-function initBoard() {
-    const layout = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
-    // White
-    for(let i=0; i<8; i++) {
-        board.push({ x: i, y: 7, type: layout[i], color: 'white' });
-        board.push({ x: i, y: 6, type: 'p', color: 'white' });
-    }
-    // Black
-    for(let i=0; i<8; i++) {
-        board.push({ x: i, y: 0, type: layout[i], color: 'black' });
-        board.push({ x: i, y: 1, type: 'p', color: 'black' });
-    }
-}
-
-function resize() {
-    width = canvas.width = window.innerWidth;
-    height = canvas.height = window.innerHeight;
-}
-
-window.addEventListener('resize', resize);
-resize();
-initBoard();
-
-// --- Coordinate Helpers ---
-function screenToWorld(sx, sy) {
-    return {
-        x: Math.floor((sx - width/2 - camera.x) / (cellSize * camera.zoom)),
-        y: Math.floor((sy - height/2 - camera.y) / (cellSize * camera.zoom))
-    };
-}
-
-// --- Rendering ---
-function draw() {
-    ctx.clearRect(0, 0, width, height);
-    
-    const viewStep = cellSize * camera.zoom;
-    const startX = Math.floor((-width/2 - camera.x) / viewStep);
-    const endX = Math.ceil((width/2 - camera.x) / viewStep);
-    const startY = Math.floor((-height/2 - camera.y) / viewStep);
-    const endY = Math.ceil((height/2 - camera.y) / viewStep);
-
-    // Draw Grid
-    for (let x = startX; x <= endX; x++) {
-        for (let y = startY; y <= endY; y++) {
-            ctx.fillStyle = (x + y) % 2 === 0 ? '#eee' : '#999';
-            ctx.fillRect(
-                width/2 + camera.x + x * viewStep,
-                height/2 + camera.y + y * viewStep,
-                viewStep, viewStep
-            );
+        // Acting as the Guest
+        function connectToFriend() {
+            const friendId = document.getElementById('join-id').value;
+            conn = peer.connect(friendId);
+            myColor = 'black';
+            setupConn();
+            turnDisplay.innerText = "Connected! You are Black";
         }
-    }
 
-    // Draw Selection Highlight
-    if (selectedPiece) {
-        ctx.strokeStyle = '#ff0000';
-        ctx.lineWidth = 3;
-        ctx.strokeRect(
-            width/2 + camera.x + selectedPiece.x * viewStep,
-            height/2 + camera.y + selectedPiece.y * viewStep,
-            viewStep, viewStep
-        );
-    }
-
-    // Draw Pieces
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.font = `${viewStep * 0.8}px serif`;
-    
-    board.forEach(p => {
-        ctx.fillStyle = 'black'; // Unicode handles its own color mostly, but for contrast:
-        ctx.fillText(
-            PIECES[p.color][p.type],
-            width/2 + camera.x + (p.x + 0.5) * viewStep,
-            height/2 + camera.y + (p.y + 0.5) * viewStep
-        );
-    });
-
-    requestAnimationFrame(draw);
-}
-
-// --- Input Handling ---
-canvas.addEventListener('mousedown', (e) => {
-    isDragging = false;
-    lastMouse = { x: e.clientX, y: e.clientY };
-});
-
-canvas.addEventListener('mousemove', (e) => {
-    if (e.buttons === 1) {
-        isDragging = true;
-        camera.x += e.clientX - lastMouse.x;
-        camera.y += e.clientY - lastMouse.y;
-        lastMouse = { x: e.clientX, y: e.clientY };
-    }
-});
-
-canvas.addEventListener('mouseup', (e) => {
-    if (!isDragging) {
-        const worldPos = screenToWorld(e.clientX, e.clientY);
-        handleCellClick(worldPos.x, worldPos.y);
-    }
-});
-
-canvas.addEventListener('wheel', (e) => {
-    const zoomSpeed = 0.1;
-    const delta = e.deltaY > 0 ? 1 - zoomSpeed : 1 + zoomSpeed;
-    camera.zoom *= delta;
-    camera.zoom = Math.max(0.1, Math.min(camera.zoom, 5));
-});
-
-function handleCellClick(x, y) {
-    const pieceAtPos = board.find(p => p.x === x && p.y === y);
-
-    if (selectedPiece) {
-        // Capture logic
-        if (pieceAtPos && pieceAtPos.color !== selectedPiece.color) {
-            board = board.filter(p => p !== pieceAtPos);
-            movePiece(x, y);
-        } 
-        // Move to empty space
-        else if (!pieceAtPos) {
-            movePiece(x, y);
+        function setupConn() {
+            document.getElementById('setup').style.display = 'none';
+            conn.on('data', (data) => {
+                if (data.type === 'move') {
+                    const piece = board.find(p => p.id === data.pieceId);
+                    // Remove target if captured
+                    board = board.filter(p => !(p.x === data.x && p.y === data.y));
+                    if (piece) {
+                        piece.x = data.x;
+                        piece.y = data.y;
+                        turn = turn === 'white' ? 'black' : 'white';
+                        updateTurnUI();
+                    }
+                }
+            });
         }
-        // Deselect or Switch
-        else {
-            selectedPiece = pieceAtPos.color === turn ? pieceAtPos : null;
-        }
-    } else if (pieceAtPos && pieceAtPos.color === turn) {
-        selectedPiece = pieceAtPos;
-    }
-}
 
-function movePiece(x, y) {
-    selectedPiece.x = x;
-    selectedPiece.y = y;
-    selectedPiece = null;
-    turn = turn === 'white' ? 'black' : 'white';
-    turnDisplay.innerText = `Turn: ${turn.charAt(0).toUpperCase() + turn.slice(1)}`;
-}
-    //teste
-    ``
-draw();
-</script>
+        // Chess Logic
+        const PIECES = {
+            white: { r: '♖', n: '♘', b: '♗', q: '♕', k: '♔', p: '♙' },
+            black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
+        };
+
+        function initBoard() {
+            const layout = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
+            let idCounter = 0;
+            for (let i = 0; i < 8; i++) {
+                board.push({ id: idCounter++, x: i, y: 7, type: layout[i], color: 'white' });
+                board.push({ id: idCounter++, x: i, y: 6, type: 'p', color: 'white' });
+                board.push({ id: idCounter++, x: i, y: 0, type: layout[i], color: 'black' });
+                board.push({ id: idCounter++, x: i, y: 1, type: 'p', color: 'black' });
+            }
+        }
+
+        function handleCellClick(x, y) {
+            if (turn !== myColor) return; // Not your turn
+
+            const pieceAtPos = board.find(p => p.x === x && p.y === y);
+
+            if (selectedPiece) {
+                if (!pieceAtPos || pieceAtPos.color !== selectedPiece.color) {
+                    const moveData = { type: 'move', x: x, y: y, pieceId: selectedPiece.id };
+                    conn.send(moveData); // Send to friend
+
+                    // Apply locally
+                    board = board.filter(p => !(p.x === x && p.y === y));
+                    selectedPiece.x = x;
+                    selectedPiece.y = y;
+                    selectedPiece = null;
+                    turn = turn === 'white' ? 'black' : 'white';
+                    updateTurnUI();
+                } else {
+                    selectedPiece = pieceAtPos;
+                }
+            } else if (pieceAtPos && pieceAtPos.color === turn) {
+                selectedPiece = pieceAtPos;
+            }
+        }
+
+        function updateTurnUI() {
+            const status = (turn === myColor) ? "Your Turn" : "Opponent's Turn";
+            turnDisplay.innerText = `${status} (${turn})`;
+        }
+
+        // Rendering & Input (Same as before but with Board Drawing)
+        function draw() {
+            ctx.clearRect(0, 0, width, height);
+            const viewStep = cellSize * camera.zoom;
+            const startX = Math.floor((-width / 2 - camera.x) / viewStep);
+            const endX = Math.ceil((width / 2 - camera.x) / viewStep);
+            const startY = Math.floor((-height / 2 - camera.y) / viewStep);
+            const endY = Math.ceil((height / 2 - camera.y) / viewStep);
+
+            for (let x = startX; x <= endX; x++) {
+                for (let y = startY; y <= endY; y++) {
+                    ctx.fillStyle = (x + y) % 2 === 0 ? '#eee' : '#999';
+                    ctx.fillRect(width / 2 + camera.x + x * viewStep, height / 2 + camera.y + y * viewStep, viewStep, viewStep);
+                }
+            }
+
+            if (selectedPiece) {
+                ctx.strokeStyle = '#ff0000'; ctx.lineWidth = 3;
+                ctx.strokeRect(width / 2 + camera.x + selectedPiece.x * viewStep, height / 2 + camera.y + selectedPiece.y * viewStep, viewStep, viewStep);
+            }
+
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = `${viewStep * 0.8}px serif`;
+            board.forEach(p => {
+                ctx.fillStyle = 'black';
+                ctx.fillText(PIECES[p.color][p.type], width / 2 + camera.x + (p.x + 0.5) * viewStep, height / 2 + camera.y + (p.y + 0.5) * viewStep);
+            });
+            requestAnimationFrame(draw);
+        }
+
+        // Standard Boilerplate
+        function resize() { width = canvas.width = window.innerWidth; height = canvas.height = window.innerHeight; }
+        window.addEventListener('resize', resize);
+        resize();
+        initBoard();
+        canvas.onmousedown = (e) => { isDragging = false; lastMouse = { x: e.clientX, y: e.clientY }; };
+        canvas.onmousemove = (e) => { if (e.buttons === 1) { isDragging = true; camera.x += e.clientX - lastMouse.x; camera.y += e.clientY - lastMouse.y; lastMouse = { x: e.clientX, y: e.clientY }; } };
+        canvas.onmouseup = (e) => { if (!isDragging) { const world = { x: Math.floor((e.clientX - width / 2 - camera.x) / (cellSize * camera.zoom)), y: Math.floor((e.clientY - height / 2 - camera.y) / (cellSize * camera.zoom)) }; handleCellClick(world.x, world.y); } };
+        canvas.onwheel = (e) => { camera.zoom *= e.deltaY > 0 ? 0.9 : 1.1; camera.zoom = Math.max(0.1, Math.min(camera.zoom, 5)); };
+        draw();
+    </script>
 </body>
 </html>
