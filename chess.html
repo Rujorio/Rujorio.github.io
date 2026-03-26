@@ -24,6 +24,10 @@
             width: 100vw;
             height: 100vh;
             z-index: 1;
+            /* NEW: Prevents mobile "pull-to-refresh" and accidental zooming */
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
         }
 
         #ui {
@@ -102,7 +106,7 @@
     <canvas id="gameCanvas"></canvas>
 
     <script>
-        // FULL BROWSER CONFIG: Restoring direct URLs
+        // 1. FIREBASE CONFIG
         const firebaseConfig = {
             apiKey: "AIzaSyCkwCHcME83CIh_D7RbO9kYD0sBPYCcl6Y",
             authDomain: "chess-2-2a1c9.firebaseapp.com",
@@ -111,14 +115,13 @@
             messagingSenderId: "1048494437159",
             appId: "1:1048494437159:web:f471c57a71d361c982ef02",
             measurementId: "G-XB4DL015VR",
-            // Must end with a / to satisfy the 'root' requirement
             databaseURL: "https://chess-2-2a1c9-default-rtdb.europe-west1.firebasedatabase.app/"
         };
 
-        // Standard Initialization
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
 
+        // 2. VARIABLES
         let myRoomId = Math.floor(1000 + Math.random() * 9000).toString();
         let currentRoomId = myRoomId;
         let roomRef = null;
@@ -132,6 +135,8 @@
         let width, height, cellSize = 60;
         let camera = { x: 0, y: 0, zoom: 1 };
         let isDragging = false, lastMouse = { x: 0, y: 0 };
+        let touchStartPos = { x: 0, y: 0 };
+        let touchThreshold = 10;
         let selectedPiece = null, turn = 'white', board = [];
 
         const PIECES = {
@@ -139,6 +144,7 @@
             black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
         };
 
+        // 3. CORE FUNCTIONS
         function initBoard() {
             board = [];
             const layout = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
@@ -154,19 +160,42 @@
             if (roomRef) roomRef.update({ board, turn });
         }
 
+        function handleGameClick(worldPos) {
+            const pieceAtPos = board.find(p => p.x === worldPos.x && p.y === worldPos.y);
+
+            if (selectedPiece) {
+                if (!pieceAtPos || pieceAtPos.color !== selectedPiece.color) {
+                    const piece = board.find(p => p.x === selectedPiece.x && p.y === selectedPiece.y);
+                    if (piece) {
+                        board = board.filter(p => !(p.x === worldPos.x && p.y === worldPos.y));
+                        piece.x = worldPos.x; piece.y = worldPos.y;
+                        selectedPiece = null;
+                        turn = (turn === 'white') ? 'black' : 'white';
+                        updateTurnDisplay();
+                        syncToFirebase();
+                    }
+                } else {
+                    selectedPiece = (pieceAtPos.color === turn) ? pieceAtPos : null;
+                }
+            } else if (pieceAtPos && pieceAtPos.color === turn) {
+                selectedPiece = pieceAtPos;
+            }
+        }
+
+        function screenToWorld(pos) {
+            return {
+                x: Math.floor((pos.x - width / 2 - camera.x) / (cellSize * camera.zoom)),
+                y: Math.floor((pos.y - height / 2 - camera.y) / (cellSize * camera.zoom))
+            };
+        }
+
+        // 4. NETWORKING (Host/Join)
         function initAsHost(id) {
             if (roomRef) roomRef.off();
             currentRoomId = id;
             roomRef = db.ref('rooms/' + id);
-
-            roomRef.set({
-                board: board,
-                turn: 'white',
-                hostName: "Player " + id
-            });
-
+            roomRef.set({ board, turn: 'white', hostName: "Player " + id });
             roomRef.onDisconnect().remove();
-
             roomRef.on('value', (snapshot) => {
                 const data = snapshot.val();
                 if (data) {
@@ -184,7 +213,6 @@
                 currentRoomId = targetId;
                 roomRef = db.ref('rooms/' + targetId);
                 statusDisplay.innerText = "Status: Joined " + targetId;
-
                 roomRef.on('value', (snapshot) => {
                     const data = snapshot.val();
                     if (data) {
@@ -216,6 +244,7 @@
             turnDisplay.innerText = `Turn: ${turn.charAt(0).toUpperCase() + turn.slice(1)}`;
         }
 
+        // 5. RENDERING
         function resize() {
             width = canvas.width = window.innerWidth;
             height = canvas.height = window.innerHeight;
@@ -225,7 +254,6 @@
             ctx.clearRect(0, 0, width, height);
             const vStep = cellSize * camera.zoom;
 
-            // Grid Rendering
             for (let x = Math.floor((-width / 2 - camera.x) / vStep); x <= Math.ceil((width / 2 - camera.x) / vStep); x++) {
                 for (let y = Math.floor((-height / 2 - camera.y) / vStep); y <= Math.ceil((height / 2 - camera.y) / vStep); y++) {
                     ctx.fillStyle = (x + y) % 2 === 0 ? '#eee' : '#999';
@@ -246,15 +274,14 @@
             requestAnimationFrame(draw);
         }
 
-        function screenToWorld(pos) {
-            return {
-                x: Math.floor((pos.x - width / 2 - camera.x) / (cellSize * camera.zoom)),
-                y: Math.floor((pos.y - height / 2 - camera.y) / (cellSize * camera.zoom))
-            };
-        }
-
+        // 6. INPUT LISTENERS (Mouse + Touch)
         window.addEventListener('resize', resize);
-        canvas.addEventListener('mousedown', (e) => { isDragging = false; lastMouse = { x: e.clientX, y: e.clientY }; });
+
+        // Mouse Listeners
+        canvas.addEventListener('mousedown', (e) => {
+            isDragging = false;
+            lastMouse = { x: e.clientX, y: e.clientY };
+        });
         canvas.addEventListener('mousemove', (e) => {
             if (e.buttons === 1) {
                 isDragging = true;
@@ -266,41 +293,47 @@
         canvas.addEventListener('mouseup', (e) => {
             if (!isDragging) {
                 const rect = canvas.getBoundingClientRect();
-                const worldPos = screenToWorld({ x: e.clientX - rect.left, y: e.clientY - rect.top });
-                const pieceAtPos = board.find(p => p.x === worldPos.x && p.y === worldPos.y);
-
-                if (selectedPiece) {
-                    if (!pieceAtPos || pieceAtPos.color !== selectedPiece.color) {
-                        // Apply Move
-                        const from = { x: selectedPiece.x, y: selectedPiece.y };
-                        const piece = board.find(p => p.x === from.x && p.y === from.y);
-                        if (piece) {
-                            board = board.filter(p => !(p.x === worldPos.x && p.y === worldPos.y));
-                            piece.x = worldPos.x; piece.y = worldPos.y;
-                            selectedPiece = null;
-                            turn = (turn === 'white') ? 'black' : 'white';
-                            updateTurnDisplay();
-                            syncToFirebase();
-                        }
-                    } else {
-                        selectedPiece = (pieceAtPos.color === turn) ? pieceAtPos : null;
-                    }
-                } else if (pieceAtPos && pieceAtPos.color === turn) {
-                    selectedPiece = pieceAtPos;
-                }
+                handleGameClick(screenToWorld({ x: e.clientX - rect.left, y: e.clientY - rect.top }));
             }
         });
+
+        // Touch Listeners
+        canvas.addEventListener('touchstart', (e) => {
+            const touch = e.touches[0];
+            isDragging = false;
+            touchStartPos = { x: touch.clientX, y: touch.clientY };
+            lastMouse = { x: touch.clientX, y: touch.clientY };
+        }, { passive: true });
+
+        canvas.addEventListener('touchmove', (e) => {
+            const touch = e.touches[0];
+            const dx = Math.abs(touch.clientX - touchStartPos.x);
+            const dy = Math.abs(touch.clientY - touchStartPos.y);
+
+            if (dx > touchThreshold || dy > touchThreshold) {
+                isDragging = true;
+                camera.x += touch.clientX - lastMouse.x;
+                camera.y += touch.clientY - lastMouse.y;
+                lastMouse = { x: touch.clientX, y: touch.clientY };
+            }
+        }, { passive: true });
+
+        canvas.addEventListener('touchend', (e) => {
+            if (!isDragging) {
+                const rect = canvas.getBoundingClientRect();
+                handleGameClick(screenToWorld({ x: touchStartPos.x - rect.left, y: touchStartPos.y - rect.top }));
+            }
+        });
+
         canvas.addEventListener('wheel', (e) => {
             camera.zoom *= (e.deltaY > 0 ? 0.9 : 1.1);
             camera.zoom = Math.max(0.1, Math.min(camera.zoom, 5));
         });
 
-        // STARTUP SEQUENCE: Draw locally first
+        // 7. START
         resize();
         initBoard();
         draw();
-
-        // Then attempt connection
         initAsHost(myRoomId);
     </script>
 </body>
