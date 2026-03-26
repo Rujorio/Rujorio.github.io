@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: 'unsafe-inline' 'unsafe-eval'; connect-src https: wss: *.peerjs.com;">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: 'unsafe-inline' 'unsafe-eval'; connect-src https: wss: *.peerjs.com wss://0.peerjs.com;">
     <title>Infinite Chess</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
     <style>
@@ -29,17 +29,18 @@
             top: 10px;
             left: 10px;
             color: white;
-            background: rgba(0,0,0,0.85);
+            background: rgba(0,0,0,0.9);
             padding: 15px;
             border-radius: 9px;
             pointer-events: auto;
             z-index: 100;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
         }
 
         .controls {
-            font-size: 0.8em;
-            opacity: 0.7;
-            margin: 5px 0;
+            font-size: 0.75em;
+            opacity: 0.6;
+            margin-bottom: 10px;
         }
 
         #peer-area {
@@ -52,24 +53,33 @@
             background: #333;
             border: 1px solid #555;
             color: white;
-            padding: 5px;
+            padding: 6px;
             border-radius: 4px;
-            width: 120px;
+            width: 110px;
+            font-size: 0.8em;
         }
 
         button {
             background: #28a745;
             border: none;
             color: white;
-            padding: 5px 10px;
+            padding: 6px 10px;
             border-radius: 4px;
             cursor: pointer;
+            font-size: 0.8em;
+            margin: 2px;
         }
+
+            button.copy {
+                background: #555;
+                margin-left: 5px;
+            }
 
         #status {
             font-size: 0.85em;
             color: #00ff00;
             margin-bottom: 5px;
+            font-weight: bold;
         }
     </style>
 </head>
@@ -79,8 +89,11 @@
         <div id="turn">Turn: White</div>
         <div class="controls">Drag to Pan | Scroll to Zoom</div>
         <div id="peer-area">
-            <div id="status">Status: Connecting...</div>
-            <div id="my-id" style="font-size: 0.8em; margin-bottom: 8px;">Your ID: ...</div>
+            <div id="status">Status: Initializing...</div>
+            <div style="display: flex; align-items: center; margin-bottom: 8px;">
+                <span id="my-id" style="font-size: 0.8em; color: #aaa;">ID: ...</span>
+                <button class="copy" onclick="copyMyId()">Copy</button>
+            </div>
             <input type="text" id="remote-id" placeholder="Friend's ID">
             <button onclick="connectToFriend()">Connect</button>
         </div>
@@ -103,20 +116,22 @@
         let selectedPiece = null;
         let turn = 'white';
         let board = [];
+        let currentPeerId = "";
 
         // --- PEERJS LOGIC ---
-        // Added explicit host configuration for better reliability
+        // Using explicit public server config to help Discord find the network
         const peer = new Peer();
         let conn = null;
 
         peer.on('open', (id) => {
-            myIdDisplay.innerText = "Your ID: " + id;
-            statusDisplay.innerText = "Status: Ready";
+            currentPeerId = id;
+            myIdDisplay.innerText = "ID: " + id;
+            statusDisplay.innerText = "Status: Online";
         });
 
         peer.on('error', (err) => {
-            console.error(err);
-            statusDisplay.innerText = "Status: Connection Error";
+            console.error("Peer Error:", err.type);
+            statusDisplay.innerText = "Status: Net Error (" + err.type + ")";
             statusDisplay.style.color = "#ff4444";
         });
 
@@ -124,6 +139,14 @@
             conn = c;
             setupConnection();
         });
+
+        function copyMyId() {
+            if (!currentPeerId) return;
+            navigator.clipboard.writeText(currentPeerId);
+            const btn = document.querySelector('.copy');
+            btn.innerText = "Saved!";
+            setTimeout(() => btn.innerText = "Copy", 2000);
+        }
 
         function connectToFriend() {
             const id = document.getElementById('remote-id').value.trim();
@@ -167,7 +190,7 @@
         }
 
         function draw() {
-            if (width === 0 || height === 0) resize();
+            if (!width) resize();
             ctx.clearRect(0, 0, width, height);
             const vStep = cellSize * camera.zoom;
             const sX = Math.floor((-width / 2 - camera.x) / vStep);
@@ -244,8 +267,7 @@
             camera.zoom = Math.max(0.1, Math.min(camera.zoom, 5));
         });
 
-        // Start Everything
-        resize();
+        // Initialize immediately
         initBoard();
         draw();
     </script>
