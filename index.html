@@ -21,7 +21,7 @@
             left: 0;
             width: 100vw;
             height: 100vh;
-            z-index: 1; /* Puts the board behind the UI */
+            z-index: 1;
         }
 
         #ui {
@@ -29,26 +29,51 @@
             top: 10px;
             left: 10px;
             color: white;
-            background: rgba(0,0,0,0.8);
+            background: rgba(0,0,0,0.85);
             padding: 15px;
             border-radius: 9px;
             pointer-events: auto;
-            user-select: text; /* Allowed interaction for copying ID */
             z-index: 100;
         }
 
         .controls {
             font-size: 0.8em;
-            opacity: 0.8;
-            margin-top: 5px;
+            opacity: 0.7;
+            margin: 5px 0;
         }
 
-        #peer-info {
+        #peer-area {
             margin-top: 10px;
             padding-top: 10px;
             border-top: 1px solid #444;
-            font-size: 0.9em;
+        }
+
+        input {
+            background: #333;
+            border: 1px solid #555;
+            color: white;
+            padding: 5px;
+            border-radius: 4px;
+            width: 120px;
+        }
+
+        button {
+            background: #28a745;
+            border: none;
+            color: white;
+            padding: 5px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+            button:hover {
+                background: #218838;
+            }
+
+        #status {
+            font-size: 0.85em;
             color: #00ff00;
+            margin-bottom: 5px;
         }
     </style>
 </head>
@@ -56,8 +81,14 @@
 
     <div id="ui">
         <div id="turn">Turn: White</div>
-        <div class="controls">Drag to Pan | Scroll to Zoom | Click to Move</div>
-        <div id="peer-info">Connecting to network...</div>
+        <div class="controls">Drag to Pan | Scroll to Zoom</div>
+
+        <div id="peer-area">
+            <div id="status">Status: Connecting...</div>
+            <div id="my-id" style="font-size: 0.8em; margin-bottom: 8px;">Your ID: ...</div>
+            <input type="text" id="remote-id" placeholder="Friend's ID">
+            <button onclick="connectToFriend()">Connect</button>
+        </div>
     </div>
 
     <canvas id="gameCanvas"></canvas>
@@ -66,7 +97,8 @@
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         const turnDisplay = document.getElementById('turn');
-        const peerInfo = document.getElementById('peer-info');
+        const statusDisplay = document.getElementById('status');
+        const myIdDisplay = document.getElementById('my-id');
 
         let width, height;
         let cellSize = 60;
@@ -75,26 +107,55 @@
         let lastMouse = { x: 0, y: 0 };
         let selectedPiece = null;
         let turn = 'white';
+        let board = [];
 
+        // --- MULTIPLAYER LOGIC ---
+        const peer = new Peer();
+        let conn = null;
+
+        peer.on('open', (id) => {
+            myIdDisplay.innerText = "Your ID: " + id;
+            statusDisplay.innerText = "Status: Ready";
+        });
+
+        // Receiving a connection
+        peer.on('connection', (c) => {
+            conn = c;
+            setupConnection();
+            statusDisplay.innerText = "Status: Connected!";
+        });
+
+        function connectToFriend() {
+            const id = document.getElementById('remote-id').value;
+            if (!id) return;
+            statusDisplay.innerText = "Status: Connecting...";
+            conn = peer.connect(id);
+            setupConnection();
+        }
+
+        function setupConnection() {
+            conn.on('open', () => {
+                statusDisplay.innerText = "Status: Connected!";
+                // Send current board state to friend when connecting
+                conn.send({ type: 'sync', board: board, turn: turn });
+            });
+
+            conn.on('data', (data) => {
+                if (data.type === 'move') {
+                    applyMove(data.from, data.to);
+                } else if (data.type === 'sync') {
+                    board = data.board;
+                    turn = data.turn;
+                    updateTurnDisplay();
+                }
+            });
+        }
+
+        // --- GAME LOGIC ---
         const PIECES = {
             white: { r: '♖', n: '♘', b: '♗', q: '♕', k: '♔', p: '♙' },
             black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
         };
-
-        let board = [];
-
-        // 3. INITIALIZE PEERJS
-        const peer = new Peer();
-
-        peer.on('open', (id) => {
-            peerInfo.innerText = "Your ID: " + id;
-            console.log("My peer ID is: " + id);
-        });
-
-        peer.on('error', (err) => {
-            peerInfo.innerText = "Connection Error!";
-            console.error(err);
-        });
 
         function initBoard() {
             const layout = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
@@ -110,8 +171,6 @@
             width = canvas.width = window.innerWidth;
             height = canvas.height = window.innerHeight;
         }
-
-        window.addEventListener('resize', resize);
 
         function draw() {
             ctx.clearRect(0, 0, width, height);
@@ -144,7 +203,49 @@
             requestAnimationFrame(draw);
         }
 
-        // Input logic kept the same...
+        function handleCellClick(worldPos) {
+            const x = worldPos.x; const y = worldPos.y;
+            const pieceAtPos = board.find(p => p.x === x && p.y === y);
+
+            if (selectedPiece) {
+                const from = { x: selectedPiece.x, y: selectedPiece.y };
+                const to = { x, y };
+
+                // Capture or Move
+                if (!pieceAtPos || pieceAtPos.color !== selectedPiece.color) {
+                    applyMove(from, to);
+                    // SEND MOVE TO FRIEND
+                    if (conn && conn.open) {
+                        conn.send({ type: 'move', from, to });
+                    }
+                } else {
+                    selectedPiece = pieceAtPos.color === turn ? pieceAtPos : null;
+                }
+            } else if (pieceAtPos && pieceAtPos.color === turn) {
+                selectedPiece = pieceAtPos;
+            }
+        }
+
+        function applyMove(from, to) {
+            const piece = board.find(p => p.x === from.x && p.y === from.y);
+            if (!piece) return;
+
+            // Remove target piece if it's a capture
+            board = board.filter(p => !(p.x === to.x && p.y === to.y));
+
+            piece.x = to.x;
+            piece.y = to.y;
+            selectedPiece = null;
+            turn = turn === 'white' ? 'black' : 'white';
+            updateTurnDisplay();
+        }
+
+        function updateTurnDisplay() {
+            turnDisplay.innerText = `Turn: ${turn.charAt(0).toUpperCase() + turn.slice(1)}`;
+        }
+
+        // Event Listeners
+        window.addEventListener('resize', resize);
         canvas.addEventListener('mousedown', (e) => { isDragging = false; lastMouse = { x: e.clientX, y: e.clientY }; });
         canvas.addEventListener('mousemove', (e) => {
             if (e.buttons === 1) {
@@ -154,7 +255,13 @@
                 lastMouse = { x: e.clientX, y: e.clientY };
             }
         });
-        canvas.addEventListener('mouseup', (e) => { if (!isDragging) handleCellClick(screenToWorld(e.clientX, e.clientY)); });
+        canvas.addEventListener('mouseup', (e) => {
+            if (!isDragging) {
+                const rect = canvas.getBoundingClientRect();
+                const worldPos = screenToWorld({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+                handleCellClick(worldPos);
+            }
+        });
         canvas.addEventListener('wheel', (e) => {
             camera.zoom *= (e.deltaY > 0 ? 0.9 : 1.1);
             camera.zoom = Math.max(0.1, Math.min(camera.zoom, 5));
@@ -167,39 +274,11 @@
             };
         }
 
-        function handleCellClick(worldPos) {
-            const x = worldPos.x; const y = worldPos.y;
-            const pieceAtPos = board.find(p => p.x === x && p.y === y);
-            if (selectedPiece) {
-                if (pieceAtPos && pieceAtPos.color !== selectedPiece.color) {
-                    board = board.filter(p => p !== pieceAtPos);
-                    movePiece(x, y);
-                } else if (!pieceAtPos) {
-                    movePiece(x, y);
-                } else {
-                    selectedPiece = pieceAtPos.color === turn ? pieceAtPos : null;
-                }
-            } else if (pieceAtPos && pieceAtPos.color === turn) {
-                selectedPiece = pieceAtPos;
-            }
-        }
-
-        function movePiece(x, y) {
-            selectedPiece.x = x;
-            selectedPiece.y = y;
-            selectedPiece = null;
-            turn = turn === 'white' ? 'black' : 'white';
-            turnDisplay.innerText = `Turn: ${turn.charAt(0).toUpperCase() + turn.slice(1)}`;
-        }
-
         window.addEventListener('load', () => {
-            setTimeout(() => {
-                resize();
-                initBoard();
-                draw();
-            }, 100);
+            resize();
+            initBoard();
+            draw();
         });
     </script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"></script>
 </body>
 </html>
