@@ -3,18 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' https:; connect-src 'self' https://*.firebaseio.com wss://*.firebaseio.com https://*.googleapis.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com;">
     <title>Infinite Chess 2</title>
+
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+
     <style>
         body {
             margin: 0;
             overflow: hidden;
             background: #1a1a1a;
             font-family: sans-serif;
-            color: white;
         }
 
         canvas {
             display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
             width: 100vw;
             height: 100vh;
             z-index: 1;
@@ -24,108 +31,283 @@
             position: absolute;
             top: 10px;
             left: 10px;
+            color: white;
             background: rgba(0,0,0,0.9);
             padding: 15px;
-            border-radius: 8px;
+            border-radius: 9px;
             z-index: 100;
-            border: 1px solid #444;
-            min-width: 160px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            pointer-events: auto;
+            min-width: 180px;
         }
 
         #status {
-            color: #ffcc00;
-            font-weight: bold;
-            font-size: 0.8em;
+            font-size: 0.85em;
+            color: #00ff00;
             margin-bottom: 5px;
+            font-weight: bold;
         }
 
-        .info {
-            font-size: 0.9em;
-            opacity: 0.8;
+        .controls {
+            font-size: 0.75em;
+            opacity: 0.6;
+            margin-bottom: 10px;
+        }
+
+        #lobby-list {
+            margin-top: 10px;
+            border-top: 1px solid #444;
+            padding-top: 10px;
+        }
+
+        .lobby-item {
+            display: block;
+            width: 100%;
+            background: #28a745;
+            color: white;
+            border: none;
+            padding: 8px;
+            margin-bottom: 5px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.8em;
+            text-align: left;
+        }
+
+            .lobby-item:hover {
+                background: #218838;
+            }
+
+        .lobby-label {
+            font-size: 0.7em;
+            text-transform: uppercase;
+            color: #aaa;
+            margin-bottom: 5px;
+            display: block;
         }
     </style>
 </head>
 <body>
 
     <div id="ui">
-        <div id="status">Status: Checking Firebase...</div>
-        <div class="info">Turn: <span id="turn-display">White</span></div>
-        <button onclick="location.reload()" style="margin-top:10px; cursor:pointer;">Hard Reload</button>
+        <div id="turn">Turn: White</div>
+        <div class="controls">Drag to Pan | Scroll to Zoom</div>
+        <div id="status">Status: Hosting...</div>
+
+        <div id="lobby-list">
+            <span class="lobby-label">Available Games:</span>
+            <div id="rooms-container"></div>
+        </div>
     </div>
 
     <canvas id="gameCanvas"></canvas>
 
-    <script src="/gstatic/firebasejs/9.22.0/firebase-app-compat.js"></script>
-    <script src="/gstatic/firebasejs/9.22.0/firebase-database-compat.js"></script>
-
     <script>
-        function initApp() {
-            const statusLabel = document.getElementById('status');
+        const firebaseConfig = {
+            apiKey: "AIzaSyCkwChcME83CiH_D7RbO9kYD0sBPYcCl6Y",
+            authDomain: "chess-2-2a1c9.firebaseapp.com",
+            databaseURL: "https://chess-2-2a1c9-default-rtdb.europe-west1.firebasedatabase.app",
+            projectId: "chess-2-2a1c9",
+            storageBucket: "chess-2-2a1c9.appspot.com",
+            messagingSenderId: "1048494437159",
+            appId: "1:1048494437159:web:f471c57a71d361c3982f02"
+        };
 
-            if (typeof firebase === 'undefined') {
-                statusLabel.innerText = "Status: Script Blocked (Check Mappings)";
-                statusLabel.style.color = "#ff4444";
-                return;
-            }
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
 
-            const firebaseConfig = {
-                apiKey: "AIzaSyCkwChcME83CiH_D7RbO9kYD0sBPYcCl6Y",
-                authDomain: "chess-2-2a1c9.firebaseapp.com",
-                // This MUST match your /firebase proxy prefix
-                databaseURL: window.location.origin + "/firebase",
-                projectId: "chess-2-2a1c9"
-            };
+        let myRoomId = Math.floor(1000 + Math.random() * 9000).toString();
+        let currentRoomId = myRoomId;
+        let roomRef = null;
 
-            try {
-                firebase.initializeApp(firebaseConfig);
-                const db = firebase.database();
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const statusDisplay = document.getElementById('status');
+        const turnDisplay = document.getElementById('turn');
+        const roomsContainer = document.getElementById('rooms-container');
 
-                // Test connection
-                db.ref('.info/connected').on('value', (snap) => {
-                    if (snap.val() === true) {
-                        statusLabel.innerText = "Status: Online";
-                        statusLabel.style.color = "#00ff00";
-                    } else {
-                        statusLabel.innerText = "Status: Connecting...";
-                    }
-                });
+        let width, height, cellSize = 60;
+        let camera = { x: 0, y: 0, zoom: 1 };
+        let isDragging = false, lastMouse = { x: 0, y: 0 };
+        let selectedPiece = null, turn = 'white', board = [];
 
-                runGame(db);
-            } catch (err) {
-                statusLabel.innerText = "Status: Config Error";
-                console.error(err);
-            }
-        }
+        const PIECES = {
+            white: { r: '♖', n: '♘', b: '♗', q: '♕', k: '♔', p: '♙' },
+            black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
+        };
 
-        function runGame(db) {
-            const canvas = document.getElementById('gameCanvas');
-            const ctx = canvas.getContext('2d');
-            let board = [];
+        // --- LOBBY LOGIC ---
 
-            // Quick draw loop to verify the canvas is working
-            function animate() {
-                ctx.fillStyle = "#1a1a1a";
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+        function initAsHost(id) {
+            if (roomRef) roomRef.off();
+            currentRoomId = id;
+            roomRef = db.ref('rooms/' + id);
 
-                // Draw a simple test grid
-                ctx.strokeStyle = "#333";
-                for (let i = 0; i < canvas.width; i += 50) {
-                    ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke();
-                }
-                requestAnimationFrame(animate);
-            }
-
-            window.addEventListener('resize', () => {
-                canvas.width = window.innerWidth;
-                canvas.height = window.innerHeight;
+            initBoard();
+            roomRef.set({
+                board: board,
+                turn: 'white',
+                hostName: "Player " + id
             });
 
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
-            animate();
+            // If user leaves/closes tab, delete their room
+            roomRef.onDisconnect().remove();
+
+            roomRef.on('value', (snapshot) => {
+                const data = snapshot.val();
+                if (data) {
+                    board = data.board || [];
+                    turn = data.turn || 'white';
+                    updateTurnDisplay();
+                    statusDisplay.innerText = "Status: Hosting (" + id + ")";
+                }
+            });
         }
 
-        window.onload = initApp;
+        function joinOtherRoom(targetId) {
+            // 1. Delete our current room
+            db.ref('rooms/' + currentRoomId).remove().then(() => {
+                // 2. Switch to the new room
+                if (roomRef) roomRef.off();
+                currentRoomId = targetId;
+                roomRef = db.ref('rooms/' + targetId);
+
+                statusDisplay.innerText = "Status: Joined " + targetId;
+
+                roomRef.on('value', (snapshot) => {
+                    const data = snapshot.val();
+                    if (data) {
+                        board = data.board || [];
+                        turn = data.turn || 'white';
+                        updateTurnDisplay();
+                    }
+                });
+            });
+        }
+
+        // Listen for all active rooms to show in the UI
+        db.ref('rooms').on('value', (snapshot) => {
+            roomsContainer.innerHTML = "";
+            let count = 0;
+            snapshot.forEach((child) => {
+                if (child.key !== currentRoomId) {
+                    count++;
+                    const btn = document.createElement('button');
+                    btn.className = 'lobby-item';
+                    btn.innerText = "▶ Join " + (child.val().hostName || child.key);
+                    btn.onclick = () => joinOtherRoom(child.key);
+                    roomsContainer.appendChild(btn);
+                }
+            });
+            if (count === 0) roomsContainer.innerHTML = "<span style='font-size:0.7em; color:#666;'>No other players online</span>";
+        });
+
+        // --- GAME LOGIC ---
+
+        function syncToFirebase() {
+            if (roomRef) roomRef.update({ board, turn });
+        }
+
+        function initBoard() {
+            board = [];
+            const layout = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
+            for (let i = 0; i < 8; i++) {
+                board.push({ x: i, y: 7, type: layout[i], color: 'white' });
+                board.push({ x: i, y: 6, type: 'p', color: 'white' });
+                board.push({ x: i, y: 0, type: layout[i], color: 'black' });
+                board.push({ x: i, y: 1, type: 'p', color: 'black' });
+            }
+        }
+
+        function applyMove(from, to) {
+            const piece = board.find(p => p.x === from.x && p.y === from.y);
+            if (!piece) return;
+            board = board.filter(p => !(p.x === to.x && p.y === to.y));
+            piece.x = to.x; piece.y = to.y;
+            selectedPiece = null;
+            turn = (turn === 'white') ? 'black' : 'white';
+            updateTurnDisplay();
+            syncToFirebase();
+        }
+
+        function updateTurnDisplay() {
+            turnDisplay.innerText = `Turn: ${turn.charAt(0).toUpperCase() + turn.slice(1)}`;
+        }
+
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, width, height);
+            const vStep = cellSize * camera.zoom;
+            const sX = Math.floor((-width / 2 - camera.x) / vStep);
+            const eX = Math.ceil((width / 2 - camera.x) / vStep);
+            const sY = Math.floor((-height / 2 - camera.y) / vStep);
+            const eY = Math.ceil((height / 2 - camera.y) / vStep);
+
+            for (let x = sX; x <= eX; x++) {
+                for (let y = sY; y <= eY; y++) {
+                    ctx.fillStyle = (x + y) % 2 === 0 ? '#eee' : '#999';
+                    ctx.fillRect(width / 2 + camera.x + x * vStep, height / 2 + camera.y + y * vStep, vStep, vStep);
+                }
+            }
+            if (selectedPiece) {
+                ctx.strokeStyle = '#ff0000'; ctx.lineWidth = 3;
+                ctx.strokeRect(width / 2 + camera.x + selectedPiece.x * vStep, height / 2 + camera.y + selectedPiece.y * vStep, vStep, vStep);
+            }
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = `${vStep * 0.8}px serif`;
+            board.forEach(p => {
+                ctx.fillStyle = 'black';
+                ctx.fillText(PIECES[p.color][p.type], width / 2 + camera.x + (p.x + 0.5) * vStep, height / 2 + camera.y + (p.y + 0.5) * vStep);
+            });
+            requestAnimationFrame(draw);
+        }
+
+        function screenToWorld(pos) {
+            return {
+                x: Math.floor((pos.x - width / 2 - camera.x) / (cellSize * camera.zoom)),
+                y: Math.floor((pos.y - height / 2 - camera.y) / (cellSize * camera.zoom))
+            };
+        }
+
+        window.addEventListener('resize', resize);
+        canvas.addEventListener('mousedown', (e) => { isDragging = false; lastMouse = { x: e.clientX, y: e.clientY }; });
+        canvas.addEventListener('mousemove', (e) => {
+            if (e.buttons === 1) {
+                isDragging = true;
+                camera.x += e.clientX - lastMouse.x;
+                camera.y += e.clientY - lastMouse.y;
+                lastMouse = { x: e.clientX, y: e.clientY };
+            }
+        });
+        canvas.addEventListener('mouseup', (e) => {
+            if (!isDragging) {
+                const rect = canvas.getBoundingClientRect();
+                const worldPos = screenToWorld({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+                const pieceAtPos = board.find(p => p.x === worldPos.x && p.y === worldPos.y);
+
+                if (selectedPiece) {
+                    if (!pieceAtPos || pieceAtPos.color !== selectedPiece.color) {
+                        applyMove({ x: selectedPiece.x, y: selectedPiece.y }, worldPos);
+                    } else {
+                        selectedPiece = (pieceAtPos.color === turn) ? pieceAtPos : null;
+                    }
+                } else if (pieceAtPos && pieceAtPos.color === turn) {
+                    selectedPiece = pieceAtPos;
+                }
+            }
+        });
+        canvas.addEventListener('wheel', (e) => {
+            camera.zoom *= (e.deltaY > 0 ? 0.9 : 1.1);
+            camera.zoom = Math.max(0.1, Math.min(camera.zoom, 5));
+        });
+
+        // Initialize
+        resize();
+        initAsHost(myRoomId);
+        draw();
     </script>
 </body>
 </html>
