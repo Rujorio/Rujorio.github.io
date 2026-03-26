@@ -302,21 +302,29 @@
             const touch = e.touches[0];
             isDragging = false;
             touchStartPos = { x: touch.clientX, y: touch.clientY };
+            // This line is vital:
             lastMouse = { x: touch.clientX, y: touch.clientY };
-        }, { passive: true });
+        }, { passive: false });
 
         canvas.addEventListener('touchmove', (e) => {
-            const touch = e.touches[0];
-            const dx = Math.abs(touch.clientX - touchStartPos.x);
-            const dy = Math.abs(touch.clientY - touchStartPos.y);
 
-            if (dx > touchThreshold || dy > touchThreshold) {
+            if (e.cancelable) e.preventDefault();
+
+            const touch = e.touches[0];
+
+            const movementX = touch.clientX - lastMouse.x;
+            const movementY = touch.clientY - lastMouse.y;
+
+            camera.x += movementX;
+            camera.y += movementY;
+
+            const totalDist = Math.hypot(touch.clientX - touchStartPos.x, touch.clientY - touchStartPos.y);
+            if (totalDist > 5) {
                 isDragging = true;
-                camera.x += touch.clientX - lastMouse.x;
-                camera.y += touch.clientY - lastMouse.y;
-                lastMouse = { x: touch.clientX, y: touch.clientY };
             }
-        }, { passive: true });
+
+            lastMouse = { x: touch.clientX, y: touch.clientY };
+        }, { passive: false });
 
         canvas.addEventListener('touchend', (e) => {
             if (!isDragging) {
