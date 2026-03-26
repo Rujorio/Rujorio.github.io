@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Infinite Chess 2 - Mobile Bridge</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <title>Infinite Chess 2 - Browser Portal</title>
     <style>
         body {
             background: #1a1a1a;
@@ -23,7 +22,7 @@
             padding: 30px;
             border-radius: 20px;
             box-shadow: 0 10px 40px rgba(0,0,0,0.6);
-            max-width: 380px;
+            max-width: 350px;
             width: 90%;
         }
 
@@ -33,13 +32,20 @@
             color: #eee;
         }
 
-        #qrcode {
+        /* The QR Code Image */
+        .qr-frame {
             background: white;
             padding: 15px;
             border-radius: 10px;
             display: inline-block;
             margin: 20px 0;
         }
+
+            .qr-frame img {
+                display: block;
+                width: 180px;
+                height: 180px;
+            }
 
         .url-input {
             width: 100%;
@@ -53,6 +59,7 @@
             text-align: center;
             margin-top: 15px;
             box-sizing: border-box;
+            outline: none;
         }
 
         .info {
@@ -74,31 +81,21 @@
         <h1>Infinite Chess 2</h1>
         <p class="info">Scan to play on mobile or bypass Discord blocks.</p>
 
-        <div id="qrcode"></div>
+        <div class="qr-frame">
+            <img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=https://rujorio.github.io/chess.html" alt="QR Code">
+        </div>
 
         <p style="font-size: 0.9em; margin-top: 10px;">Or manually copy/paste:</p>
         <input type="text" class="url-input" id="gameUrl"
                value="https://rujorio.github.io/chess.html" readonly>
 
         <p class="info">
-            Moving to a real browser fixes the <span class="highlight">"Firebase is not defined"</span> error.
+            Pasting this into <b>Chrome</b> fixes the <span class="highlight">"Firebase is not defined"</span> error.
         </p>
     </div>
 
     <script>
-        const gameUrl = "https://rujorio.github.io/chess.html";
-
-        // Generate the QR Code
-        new QRCode(document.getElementById("qrcode"), {
-            text: gameUrl,
-            width: 180,
-            height: 180,
-            colorDark: "#000000",
-            colorLight: "#ffffff",
-            correctLevel: QRCode.CorrectLevel.H
-        });
-
-        // Select text on click for easy manual copying
+        // Simple selection fall-back
         document.getElementById('gameUrl').onclick = function () {
             this.select();
         };
