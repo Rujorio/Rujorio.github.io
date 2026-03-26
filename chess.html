@@ -185,9 +185,17 @@
         }
 
         function screenToWorld(pos) {
+            const rect = canvas.getBoundingClientRect();
+
+            // 1. Get the mouse position relative to the canvas element
+            const x = pos.x - rect.left;
+            const y = pos.y - rect.top;
+
+            // 2. Adjust for the "Camera Center" (width/2) and the Camera Offset
+            // We use canvas.width instead of the 'width' variable to be 100% sure
             return {
-                x: Math.floor((pos.x - width / 2 - camera.x) / (cellSize * camera.zoom)),
-                y: Math.floor((pos.y - height / 2 - camera.y) / (cellSize * camera.zoom))
+                x: Math.floor((x - canvas.width / 2 - camera.x) / (cellSize * camera.zoom)),
+                y: Math.floor((y - canvas.height / 2 - camera.y) / (cellSize * camera.zoom))
             };
         }
 
@@ -248,8 +256,11 @@
 
         // 5. RENDERING
         function resize() {
-            width = canvas.width = window.innerWidth;
-            height = canvas.height = window.innerHeight;
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            // Don't forget to update these global variables too
+            width = canvas.width;
+            height = canvas.height;
         }
 
         function draw() {
@@ -294,8 +305,8 @@
         });
         canvas.addEventListener('mouseup', (e) => {
             if (!isDragging) {
-                const rect = canvas.getBoundingClientRect();
-                handleGameClick(screenToWorld({ x: e.clientX - rect.left, y: e.clientY - rect.top }));
+                // Just pass the raw client coordinates
+                handleGameClick(screenToWorld({ x: e.clientX, y: e.clientY }));
             }
         });
 
@@ -357,10 +368,11 @@
         }, { passive: false });
 
         canvas.addEventListener('touchend', (e) => {
-            // If we go from 2 fingers back to 1, reset pinch data so it doesn't "jump"
-            if (e.touches.length < 2) {
-                initialPinchDist = null;
+            if (e.touches.length === 0 && !isDragging) {
+                // Just pass the raw touch start coordinates
+                handleGameClick(screenToWorld({ x: touchStartPos.x, y: touchStartPos.y }));
             }
+        });
 
             // Only register a click if NO dragging or zooming happened
             if (e.touches.length === 0 && !isDragging) {
