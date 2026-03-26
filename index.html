@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Infinite Chess 2 - Portal</title>
+    <title>Infinite Chess 2 - Browser Portal</title>
     <style>
         body {
             background: #1a1a1a;
             color: white;
-            font-family: sans-serif;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             display: flex;
             flex-direction: column;
             align-items: center;
@@ -17,31 +17,52 @@
             margin: 0;
         }
 
-        h1 {
-            margin-bottom: 20px;
+        .container {
+            text-align: center;
+            background: #2a2a2a;
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
         }
 
-        .play-link {
-            padding: 15px 30px;
+        h1 {
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            color: #eee;
+        }
+
+        .play-button {
+            display: inline-block;
+            padding: 18px 40px;
             background: #28a745;
             color: white;
             text-decoration: none;
-            border-radius: 8px;
+            border-radius: 50px;
             font-weight: bold;
-            font-size: 1.2em;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-            transition: background 0.2s;
+            font-size: 1.3em;
+            transition: transform 0.2s, background 0.2s;
+            box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
         }
 
-            .play-link:hover {
+            .play-button:hover {
                 background: #218838;
+                transform: translateY(-2px);
             }
+
+        .info {
+            margin-top: 20px;
+            font-size: 0.9em;
+            color: #888;
+        }
     </style>
 </head>
 <body>
 
-    <h1>Infinite Chess 2</h1>
-    <a href="chess.html" class="play-link">Click here to play in browser</a>
+    <div class="container">
+        <h1>Infinite Chess 2</h1>
+        <a href="chess.html" target="_blank" class="play-button">Launch Game in Browser</a>
+        <p class="info">Opens in a new tab to bypass Discord restrictions.</p>
+    </div>
 
 </body>
 </html>
