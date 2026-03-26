@@ -3,10 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Infinite Chess 2</title>
+    <title>Infinite Chess 2 - Browser Version</title>
 
-    <script src="/gstatic/firebasejs/9.22.0/firebase-app-compat.js"></script>
-    <script src="/gstatic/firebasejs/9.22.0/firebase-database-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
 
     <style>
         body {
@@ -102,7 +102,7 @@
     <canvas id="gameCanvas"></canvas>
 
     <script>
-        // Updated with your latest Firebase keys
+        // Your specific Firebase config
         const firebaseConfig = {
             apiKey: "AIzaSyCkwCHcME83CIh_D7RbO9kYD0sBPYCcl6Y",
             authDomain: "chess-2-2a1c9.firebaseapp.com",
@@ -111,11 +111,11 @@
             messagingSenderId: "1048494437159",
             appId: "1:1048494437159:web:f471c57a71d361c982ef02",
             measurementId: "G-XB4DL015VR",
-            // The "True Fix" for Discord Connectivity
-            databaseURL: "/firebase/"
+            // Use the REAL URL for browser testing
+            databaseURL: "https://chess-2-2a1c9-default-rtdb.europe-west1.firebasedatabase.app/"
         };
 
-        // Initialize using the Compat SDK style
+        // Initialize
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
 
@@ -145,12 +145,7 @@
             roomRef = db.ref('rooms/' + id);
 
             initBoard();
-            roomRef.set({
-                board: board,
-                turn: 'white',
-                hostName: "Player " + id
-            });
-
+            roomRef.set({ board, turn: 'white', hostName: "Player " + id });
             roomRef.onDisconnect().remove();
 
             roomRef.on('value', (snapshot) => {
@@ -198,9 +193,7 @@
             if (count === 0) roomsContainer.innerHTML = "<span style='font-size:0.7em; color:#666;'>No other players online</span>";
         });
 
-        function syncToFirebase() {
-            if (roomRef) roomRef.update({ board, turn });
-        }
+        function syncToFirebase() { if (roomRef) roomRef.update({ board, turn }); }
 
         function initBoard() {
             board = [];
@@ -224,9 +217,7 @@
             syncToFirebase();
         }
 
-        function updateTurnDisplay() {
-            turnDisplay.innerText = `Turn: ${turn.charAt(0).toUpperCase() + turn.slice(1)}`;
-        }
+        function updateTurnDisplay() { turnDisplay.innerText = `Turn: ${turn.charAt(0).toUpperCase() + turn.slice(1)}`; }
 
         function resize() {
             width = canvas.width = window.innerWidth;
@@ -236,13 +227,8 @@
         function draw() {
             ctx.clearRect(0, 0, width, height);
             const vStep = cellSize * camera.zoom;
-            const sX = Math.floor((-width / 2 - camera.x) / vStep);
-            const eX = Math.ceil((width / 2 - camera.x) / vStep);
-            const sY = Math.floor((-height / 2 - camera.y) / vStep);
-            const eY = Math.ceil((height / 2 - camera.y) / vStep);
-
-            for (let x = sX; x <= eX; x++) {
-                for (let y = sY; y <= eY; y++) {
+            for (let x = Math.floor((-width / 2 - camera.x) / vStep); x <= Math.ceil((width / 2 - camera.x) / vStep); x++) {
+                for (let y = Math.floor((-height / 2 - camera.y) / vStep); y <= Math.ceil((height / 2 - camera.y) / vStep); y++) {
                     ctx.fillStyle = (x + y) % 2 === 0 ? '#eee' : '#999';
                     ctx.fillRect(width / 2 + camera.x + x * vStep, height / 2 + camera.y + y * vStep, vStep, vStep);
                 }
@@ -281,7 +267,6 @@
                 const rect = canvas.getBoundingClientRect();
                 const worldPos = screenToWorld({ x: e.clientX - rect.left, y: e.clientY - rect.top });
                 const pieceAtPos = board.find(p => p.x === worldPos.x && p.y === worldPos.y);
-
                 if (selectedPiece) {
                     if (!pieceAtPos || pieceAtPos.color !== selectedPiece.color) {
                         applyMove({ x: selectedPiece.x, y: selectedPiece.y }, worldPos);
@@ -298,12 +283,12 @@
             camera.zoom = Math.max(0.1, Math.min(camera.zoom, 5));
         });
 
-        // Initialize board UI before connection for smoothness
+        // Setup local board immediately
         resize();
         initBoard();
         draw();
 
-        // Start connection
+        // Connect to Firebase
         initAsHost(myRoomId);
     </script>
 </body>
