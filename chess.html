@@ -88,12 +88,21 @@
             pointer-events: none;
         }
 
+        #ui-turn {
+            display: inline-block;
+            padding: 10px; /* Space for the glow inside the element */
+            margin: -5px; /* Offset the padding so layout doesn't jump */
+            transition: text-shadow 0.3s ease-in-out;
+            will-change: transform, filter; /* Hardware acceleration for smoothness */
+        }
+
         .stat-card {
             background: rgba(0,0,0,0.8);
             padding: 12px;
             border-radius: 8px;
             border: 1px solid #333;
             margin-bottom: 5px;
+            overflow: visible;
         }
 
         #win-screen {
@@ -107,36 +116,26 @@
             justify-content: center;
         }
         @keyframes pulse-white {
-            0% {
-                opacity: 1;
-                box-shadow: 0 0 5px #fff;
+            0%, 100% {
+                transform: scale(1);
+                filter: drop-shadow(0 0 2px #fff);
             }
 
             50% {
-                opacity: 0.6;
-                box-shadow: 0 0 20px #fff;
-            }
-
-            100% {
-                opacity: 1;
-                box-shadow: 0 0 5px #fff;
+                transform: scale(1.02);
+                filter: drop-shadow(0 0 12px #fff); /* Use filter instead of text-shadow for smoother edges */
             }
         }
 
         @keyframes pulse-red {
-            0% {
-                opacity: 1;
-                box-shadow: 0 0 5px #ff4747;
+            0%, 100% {
+                transform: scale(1);
+                filter: drop-shadow(0 0 2px #ff4747);
             }
 
             50% {
-                opacity: 0.6;
-                box-shadow: 0 0 20px #ff4747;
-            }
-
-            100% {
-                opacity: 1;
-                box-shadow: 0 0 5px #ff4747;
+                transform: scale(1.02);
+                filter: drop-shadow(0 0 12px #ff4747);
             }
         }
 
@@ -286,22 +285,17 @@
                     const turnEl = document.getElementById('ui-turn');
                     turnEl.innerText = `TURN: ${turn.toUpperCase()}`;
 
-                    // Remove old pulse classes first
+                    // Force a clean state to prevent animation clipping
                     turnEl.classList.remove('pulse-white', 'pulse-red');
 
                     if (turn === myColor) {
-                        if (turn === 'white') {
-                            turnEl.style.color = "#fff";
-                            turnEl.classList.add('pulse-white');
-                        } else {
-                            turnEl.style.color = "#ff4747";
-                            turnEl.classList.add('pulse-red');
-                        }
-                        turnEl.style.textShadow = `0 0 10px ${turn === 'white' ? '#fff' : '#ff4747'}`;
+                        // Add a tiny delay to ensure the browser registers the class change smoothly
+                        requestAnimationFrame(() => {
+                            turnEl.classList.add(turn === 'white' ? 'pulse-white' : 'pulse-red');
+                        });
                     } else {
-                        // Not your turn: static colors
+                        turnEl.style.filter = "none";
                         turnEl.style.color = (turn === 'white') ? "#fff" : "#ff4747";
-                        turnEl.style.textShadow = "none";
                     }
 
                     checkWinCondition();
