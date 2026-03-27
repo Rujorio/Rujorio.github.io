@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Infinite Chess 2 - Stable Build</title>
+    <title>Plain Infinite Chess</title>
 
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
@@ -14,6 +14,9 @@
             overflow: hidden;
             background: #1a1a1a;
             font-family: sans-serif;
+            position: fixed;
+            width: 100%;
+            height: 100%;
         }
 
         canvas {
@@ -24,7 +27,7 @@
             width: 100vw;
             height: 100vh;
             z-index: 1;
-            touch-action: none !important;
+            touch-action: none;
             user-select: none;
             -webkit-user-select: none;
         }
@@ -34,90 +37,48 @@
             top: 10px;
             left: 10px;
             color: white;
-            background: rgba(0,0,0,0.9);
+            background: rgba(0,0,0,0.85);
             padding: 15px;
-            border-radius: 9px;
+            border-radius: 8px;
             z-index: 100;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
             pointer-events: auto;
-            min-width: 180px;
+            min-width: 160px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+        }
+
+        #turn {
+            font-weight: bold;
+            font-size: 1.1em;
+            margin-bottom: 5px;
         }
 
         #status {
-            font-size: 0.85em;
+            font-size: 0.8em;
             color: #00ff00;
-            margin-bottom: 5px;
-            font-weight: bold;
-        }
-
-        .controls {
-            font-size: 0.75em;
-            opacity: 0.6;
             margin-bottom: 10px;
         }
 
-        #rooms-container {
-            margin-top: 10px;
+        .controls-hint {
+            font-size: 0.7em;
+            color: #aaa;
             border-top: 1px solid #444;
-            padding-top: 10px;
+            pt: 5px;
+            margin-top: 5px;
         }
 
-        .lobby-item {
-            display: block;
-            width: 100%;
-            background: #28a745;
+        button {
+            background: #444;
             color: white;
             border: none;
-            padding: 8px;
-            margin-bottom: 5px;
+            padding: 6px 10px;
             border-radius: 4px;
             cursor: pointer;
             font-size: 0.8em;
-            text-align: left;
+            margin-top: 5px;
         }
 
-            .lobby-item:hover {
-                background: #218838;
-            }
-
-        .card-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0,0,0,0.85);
-            z-index: 1000;
-            display: none;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .card {
-            background: #2c3e50;
-            border: 2px solid gold;
-            border-radius: 12px;
-            padding: 20px;
-            width: 200px;
-            text-align: center;
-            cursor: pointer;
-            transition: transform 0.2s;
-        }
-
-            .card:hover {
-                transform: scale(1.05);
-                background: #34495e;
-            }
-
-            .card h3 {
-                color: #f1c40f;
-                margin: 0 0 10px 0;
-            }
-
-            .card p {
-                font-size: 0.9em;
-                color: #ecf0f1;
+            button:active {
+                background: #666;
             }
     </style>
 </head>
@@ -125,409 +86,193 @@
 
     <div id="ui">
         <div id="turn">Turn: White</div>
-        <div class="controls">Drag to Pan | Scroll to Zoom</div>
-        <div id="status">Status: Initializing...</div>
-        <div id="rooms-container"></div>
-    </div>
-
-    <div id="card-overlay" class="card-overlay">
-        <h1 style="color:gold; margin-bottom:20px;">Choose a Power-up</h1>
-        <div id="card-container" style="display:flex; gap:20px;"></div>
+        <div id="status">Connecting...</div>
+        <div class="controls-hint">Drag to Pan | Pinch/Scroll to Zoom</div>
+        <button onclick="resetCamera()">Center Camera</button>
     </div>
 
     <canvas id="gameCanvas"></canvas>
 
     <script>
-        // 1. FIREBASE CONFIG
+        // 1. DATABASE CONFIG
         const firebaseConfig = {
             apiKey: "AIzaSyCkwCHcME83CIh_D7RbO9kYD0sBPYCcl6Y",
             authDomain: "chess-2-2a1c9.firebaseapp.com",
             projectId: "chess-2-2a1c9",
-            storageBucket: "chess-2-2a1c9.firebasestorage.app",
-            messagingSenderId: "1048494437159",
-            appId: "1:1048494437159:web:f471c57a71d361c982ef02",
-            measurementId: "G-XB4DL015VR",
             databaseURL: "https://chess-2-2a1c9-default-rtdb.europe-west1.firebasedatabase.app/"
         };
 
-        let db = null;
-        try {
-            firebase.initializeApp(firebaseConfig);
-            db = firebase.database();
-        } catch (e) { console.error("Firebase load error", e); }
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+        const roomRef = db.ref('rooms/global-plain-chess'); // Using a global room for simplicity
 
         // 2. GLOBALS
-        let myRoomId = Math.floor(1000 + Math.random() * 9000).toString();
-        let currentRoomId = myRoomId;
-        let roomRef = null;
-
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
-        const statusDisplay = document.getElementById('status');
-        const turnDisplay = document.getElementById('turn');
-        const roomsContainer = document.getElementById('rooms-container');
-
         let width, height, cellSize = 60;
         let camera = { x: 0, y: 0, zoom: 1 };
-        let isDragging = false, lastMouse = { x: 0, y: 0 }, touchStartPos = { x: 0, y: 0 };
-        let initialPinchDist = null, lastZoom = 1;
-        let gameOver = false, winner = null;
+        let board = [], turn = 'white', myColor = 'white';
+        let selectedPiece = null;
 
-        let moveCount = 0;
-        let isChoosingCard = false;
-        let myColor = 'white';
-        let selectedPiece = null, turn = 'white', board = [];
+        // Mobile Gesture State
+        let isDragging = false, lastTouch = { x: 0, y: 0 }, initialPinchDist = null, lastZoom = 1;
 
         const PIECES = {
             white: { r: '♖', n: '♘', b: '♗', q: '♕', k: '♔', p: '♙' },
             black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
         };
 
-        // 3. GAME RULES
-        function isValidMove(piece, targetX, targetY) {
-            if (!piece) return false;
-            const dx = targetX - piece.x, dy = targetY - piece.y;
-            const absDx = Math.abs(dx), absDy = Math.abs(dy);
-
-            const isPathClear = (stepX, stepY) => {
-                let curX = piece.x + stepX, curY = piece.y + stepY;
-                while (curX !== targetX || curY !== targetY) {
-                    if (board.find(p => p.x === curX && p.y === curY)) return false;
-                    curX += stepX; curY += stepY;
-                }
-                return true;
-            };
-
-            switch (piece.type) {
-                case 'p':
-                    const dir = piece.color === 'white' ? -1 : 1;
-                    const pieceAtTarget = board.find(p => p.x === targetX && p.y === targetY);
-                    if (dx === 0 && !pieceAtTarget) {
-                        if (dy === dir) return true;
-                        if (piece.y === (piece.color === 'white' ? 6 : 1) && dy === 2 * dir && !board.find(p => p.x === piece.x && p.y === piece.y + dir)) return true;
-                    }
-                    return (absDx === 1 && dy === dir && pieceAtTarget && pieceAtTarget.color !== piece.color);
-                case 'r': return (dx === 0 || dy === 0) && isPathClear(dx === 0 ? 0 : dx / absDx, dy === 0 ? 0 : dy / absDy);
-                case 'n': return (absDx === 1 && absDy === 2) || (absDx === 2 && absDy === 1);
-                case 'b': return (absDx === absDy) && isPathClear(dx / absDx, dy / absDy);
-                case 'q': return (dx === 0 || dy === 0 || absDx === absDy) && isPathClear(dx === 0 ? 0 : dx / absDx, dy === 0 ? 0 : dy / absDy);
-                case 'k': return absDx <= 1 && absDy <= 1;
-            }
-            return false;
-        }
-
-        function checkWinCondition() {
-            const whiteKings = board.filter(p => p.color === 'white' && p.type === 'k').length;
-            const blackKings = board.filter(p => p.color === 'black' && p.type === 'k').length;
-            if (whiteKings === 0 || blackKings === 0) {
-                gameOver = true;
-                winner = whiteKings > 0 ? 'White' : 'Black';
-                if (roomRef) roomRef.update({ status: 'GAMEOVER', winner: winner });
-            }
-        }
-
-        function resetGame() {
-            gameOver = false;
-            winner = null;
-            moveCount = 0;
-            isChoosingCard = false;
-            document.getElementById('card-overlay').style.display = 'none';
-            initBoard();
-            if (roomRef) roomRef.update({ board, turn: 'white', status: 'PLAYING', winner: null, moveCount: 0 });
-        }
-
-        // 4. CORE LOGIC
-        function initBoard() {
-            board = [];
+        // 3. INITIALIZATION
+        function getStartingBoard() {
+            const b = [];
             const layout = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
             for (let i = 0; i < 8; i++) {
-                board.push({ x: i, y: 7, type: layout[i], color: 'white' });
-                board.push({ x: i, y: 6, type: 'p', color: 'white' });
-                board.push({ x: i, y: 0, type: layout[i], color: 'black' });
-                board.push({ x: i, y: 1, type: 'p', color: 'black' });
+                b.push({ x: i, y: 7, type: layout[i], color: 'white' });
+                b.push({ x: i, y: 6, type: 'p', color: 'white' });
+                b.push({ x: i, y: 0, type: layout[i], color: 'black' });
+                b.push({ x: i, y: 1, type: 'p', color: 'black' });
             }
+            return b;
         }
 
-        function screenToWorld(clientX, clientY) {
-            const rect = canvas.getBoundingClientRect();
+        roomRef.on('value', snap => {
+            const data = snap.val();
+            if (!data) {
+                roomRef.set({ board: getStartingBoard(), turn: 'white' });
+                return;
+            }
+            board = data.board;
+            turn = data.turn;
+            updateUI();
+        });
+
+        function updateUI() {
+            document.getElementById('turn').innerText = `Turn: ${turn.toUpperCase()}`;
+            document.getElementById('status').innerText = `Online | Playing as: ${myColor.toUpperCase()}`;
+        }
+
+        function resetCamera() { camera.x = 0; camera.y = 0; camera.zoom = 1; }
+
+        // 4. TOUCH & MOUSE CONTROLS
+        canvas.addEventListener('touchstart', e => {
+            if (e.touches.length === 1) {
+                isDragging = false;
+                lastTouch = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            } else if (e.touches.length === 2) {
+                initialPinchDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+                lastZoom = camera.zoom;
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchmove', e => {
+            e.preventDefault();
+            if (e.touches.length === 1) {
+                isDragging = true;
+                camera.x += e.touches[0].clientX - lastTouch.x;
+                camera.y += e.touches[0].clientY - lastTouch.y;
+                lastTouch = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            } else if (e.touches.length === 2) {
+                const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+                camera.zoom = Math.max(0.2, Math.min(lastZoom * (dist / initialPinchDist), 4));
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', e => {
+            if (!isDragging && e.changedTouches.length === 1) {
+                const t = e.changedTouches[0];
+                handleInput(t.clientX, t.clientY);
+            }
+        });
+
+        // Mouse Fallback
+        canvas.addEventListener('mousedown', e => { isDragging = false; lastTouch = { x: e.clientX, y: e.clientY }; });
+        canvas.addEventListener('mousemove', e => {
+            if (e.buttons === 1) {
+                isDragging = true;
+                camera.x += e.clientX - lastTouch.x;
+                camera.y += e.clientY - lastTouch.y;
+                lastTouch = { x: e.clientX, y: e.clientY };
+            }
+        });
+        canvas.addEventListener('mouseup', e => { if (!isDragging) handleInput(e.clientX, e.clientY); });
+        canvas.addEventListener('wheel', e => { camera.zoom = Math.max(0.2, Math.min(camera.zoom * (e.deltaY > 0 ? 0.9 : 1.1), 4)); });
+
+        function handleInput(screenX, screenY) {
+            if (turn !== myColor) return;
             const vStep = cellSize * camera.zoom;
-            return {
-                x: Math.floor((clientX - rect.left - width / 2 - camera.x) / vStep),
-                y: Math.floor((clientY - rect.top - height / 2 - camera.y) / vStep)
-            };
-        }
+            const wx = Math.floor((screenX - (width / 2 + camera.x)) / vStep);
+            const wy = Math.floor((screenY - (height / 2 + camera.y)) / vStep);
 
-        function handleGameClick(worldPos) {
-            if (gameOver) { resetGame(); return; }
-            if (turn !== myColor || isChoosingCard) return;
-
-            const pieceAtPos = board.find(p => p.x === worldPos.x && p.y === worldPos.y);
+            const pieceAtLoc = board.find(p => p.x === wx && p.y === wy);
 
             if (selectedPiece) {
-                if (pieceAtPos && pieceAtPos.color === myColor) {
-                    selectedPiece = pieceAtPos; return;
-                }
-                if (isValidMove(selectedPiece, worldPos.x, worldPos.y)) {
-                    board = board.filter(p => !(p.x === worldPos.x && p.y === worldPos.y));
-                    const p = board.find(p => p.x === selectedPiece.x && p.y === selectedPiece.y);
-                    if (p) { p.x = worldPos.x; p.y = worldPos.y; }
-
-                    checkWinCondition();
-                    selectedPiece = null;
-                    const nextTurn = (turn === 'white' ? 'black' : 'white');
-                    const nextMoveCount = moveCount + 1;
-
-                    if (roomRef) {
-                        roomRef.update({ board, turn: nextTurn, moveCount: nextMoveCount });
-                    }
+                if (pieceAtLoc && pieceAtLoc.color === myColor) {
+                    selectedPiece = pieceAtLoc; // Switch selection
                 } else {
+                    // Move piece (Plain logic: no rule enforcement for sandbox feel, or add rules if desired)
+                    const targetIdx = board.findIndex(p => p.x === selectedPiece.x && p.y === selectedPiece.y);
+                    // Capture logic
+                    const filteredBoard = board.filter(p => !(p.x === wx && p.y === wy));
+                    filteredBoard[targetIdx].x = wx;
+                    filteredBoard[targetIdx].y = wy;
+
+                    roomRef.update({
+                        board: filteredBoard,
+                        turn: turn === 'white' ? 'black' : 'white'
+                    });
                     selectedPiece = null;
                 }
-            } else if (pieceAtPos && pieceAtPos.color === myColor) {
-                selectedPiece = pieceAtPos;
+            } else if (pieceAtLoc && pieceAtLoc.color === myColor) {
+                selectedPiece = pieceAtLoc;
             }
         }
 
-        function spawnExtraPieces(type, color, count, direction = "outer") {
-            const pDir = (color === 'white') ? -1 : 1;
-            const spawnY = (color === 'white') ? 7 : 0;
-
-            for (let i = 0; i < count; i++) {
-                let targetX, targetY;
-                if (direction === "forward") {
-                    const myPawns = board.filter(p => p.color === color && p.type === 'p');
-                    if (myPawns.length > 0) {
-                        const p = myPawns[i % myPawns.length];
-                        targetX = p.x; targetY = p.y + pDir;
-                    } else { targetX = i; targetY = spawnY + pDir; }
-                } else {
-                    let attemptX = (i % 2 === 0) ? -1 - Math.floor(i / 2) : 8 + Math.floor(i / 2);
-                    let safety = 0;
-                    while (board.find(p => p.x === attemptX && p.y === spawnY) && safety < 20) {
-                        if (i % 2 === 0) attemptX--; else attemptX++;
-                        safety++;
-                    }
-                    targetX = attemptX; targetY = spawnY;
-                }
-                if (!board.find(p => p.x === targetX && p.y === targetY)) {
-                    board.push({ x: targetX, y: targetY, type: type, color: color });
-                }
-            }
-        }
-
-        // 5. NETWORKING
-        function initMultiplayer() {
-            if (!db) { statusDisplay.innerText = "Offline Mode"; return; }
-            initAsHost(myRoomId);
-            db.ref('rooms').on('value', (snap) => {
-                roomsContainer.innerHTML = "<span style='font-size:0.7em; color:#aaa;'>Games:</span>";
-                snap.forEach((child) => {
-                    const data = child.val();
-                    if (child.key !== currentRoomId && data && !data.guestJoined) {
-                        const btn = document.createElement('button');
-                        btn.className = 'lobby-item';
-                        btn.innerHTML = `⚡ Join ${child.key}`;
-                        btn.onclick = () => joinOtherRoom(child.key);
-                        roomsContainer.appendChild(btn);
-                    }
-                });
-            });
-        }
-
-        function initAsHost(id) {
-            currentRoomId = id; roomRef = db.ref('rooms/' + id);
-            myColor = 'white';
-            roomRef.set({ board, turn: 'white', hostColor: 'white', guestJoined: false, moveCount: 0, status: 'PLAYING' });
-            roomRef.onDisconnect().remove();
-            roomRef.on('value', syncState);
-        }
-
-        function joinOtherRoom(targetId) {
-            if (roomRef) roomRef.off();
-            db.ref('rooms/' + myRoomId).remove();
-            currentRoomId = targetId; roomRef = db.ref('rooms/' + targetId);
-            roomRef.once('value').then(snap => {
-                const d = snap.val();
-                if (d) {
-                    myColor = d.hostColor === 'white' ? 'black' : 'white';
-                    roomRef.update({ guestJoined: true });
-                    roomRef.on('value', syncState);
-                }
-            });
-        }
-
-        function syncState(snap) {
-            const d = snap.val();
-            if (!d) return;
-
-            board = d.board || [];
-            turn = d.turn || 'white';
-            gameOver = d.status === 'GAMEOVER';
-            winner = d.winner || null;
-
-            if (d.moveCount !== undefined && d.moveCount !== moveCount) {
-                moveCount = d.moveCount;
-                if (moveCount > 0 && moveCount % 6 === 0) {
-                    if (turn === myColor) triggerCardSelection();
-                }
-            }
-
-            updateTurnDisplay();
-            statusDisplay.innerText = `Online | You: ${myColor.toUpperCase()}`;
-        }
-
-        function updateTurnDisplay() {
-            const isMe = (turn === myColor);
-            turnDisplay.innerText = `Turn: ${turn.toUpperCase()} ${isMe ? "(YOU)" : ""}`;
-            turnDisplay.style.color = isMe ? "#00ff00" : "#fff";
-        }
-
-        // 6. POWERUPS
-        async function triggerCardSelection() {
-            if (isChoosingCard) return;
-            isChoosingCard = true;
-
-            try {
-                const snap = await db.ref('powerups').once('value');
-                const pool = [];
-                snap.forEach(c => {
-                    pool.push({ id: c.key, ...c.val() });
-                });
-
-                if (pool.length > 0) {
-                    const selected = [];
-                    // We pick 2 cards based on weight
-                    for (let i = 0; i < 2; i++) {
-                        const pick = weightedPick(pool, selected);
-                        if (pick) selected.push(pick);
-                    }
-                    showCardUI(selected);
-                } else {
-                    isChoosingCard = false;
-                }
-            } catch (e) {
-                console.error("Card Load Error:", e);
-                isChoosingCard = false;
-            }
-        }
-
-        function weightedPick(items, exclude) {
-            let tempPool = items.filter(item => !exclude.includes(item));
-            if (tempPool.length === 0) return null;
-
-            const totalWeight = tempPool.reduce((sum, item) => sum + (Number(item.weight) || 1), 0);
-            let random = Math.random() * totalWeight;
-
-            for (const item of tempPool) {
-                if (random < item.weight) return item;
-                random -= item.weight;
-            }
-            return tempPool[0];
-        }
-
-        function showCardUI(cards) {
-            const overlay = document.getElementById('card-overlay');
-            const container = document.getElementById('card-container');
-            container.innerHTML = '';
-            overlay.style.display = 'flex';
-
-            cards.forEach(card => {
-                const div = document.createElement('div');
-                div.className = 'card';
-                // Dynamic border color based on rarity
-                const rarityColors = { legendary: 'cyan', epic: '#a335ee', uncommon: '#1eff00' };
-                div.style.borderColor = rarityColors[card.rarity.toLowerCase()] || 'gold';
-
-                div.innerHTML = `
-            <h3>${card.name}</h3>
-            <p>${card.desc}</p>
-            <small style="color:${div.style.borderColor}">${card.rarity.toUpperCase()}</small>
-        `;
-
-                div.onclick = () => {
-                    executePowerupLogic(card.id);
-                    isChoosingCard = false;
-                    overlay.style.display = 'none';
-                    if (roomRef) roomRef.update({ board });
-                };
-                container.appendChild(div);
-            });
-        }
-
-        function executePowerupLogic(id) {
-            const spawnY = (myColor === 'white') ? 7 : 0;
-            const pDir = (myColor === 'white') ? -1 : 1;
-
-            switch (id) {
-                case 'p1': // King's Castle (2 Rooks)
-                    spawnExtraPieces('r', myColor, 2, "outer");
-                    break;
-                case 'p2': // Second Life (Extra King)
-                    spawnExtraPieces('k', myColor, 1, "outer");
-                    break;
-                case 'p3': // Bigger Army (Full row of Pawns)
-                    // Spawns 8 pawns in a new row
-                    for (let i = 0; i < 8; i++) {
-                        if (!board.find(p => p.x === i && p.y === spawnY + (pDir * 2))) {
-                            board.push({ x: i, y: spawnY + (pDir * 2), type: 'p', color: myColor });
-                        }
-                    }
-                    break;
-            }
-        }
-
-        // 7. DRAWING
-        function resize() { width = canvas.width = window.innerWidth; height = canvas.height = window.innerHeight; }
-
+        // 5. RENDERING
         function draw() {
             ctx.clearRect(0, 0, width, height);
-            const vStep = Math.max(5, cellSize * camera.zoom);
-            const centerX = width / 2 + camera.x, centerY = height / 2 + camera.y;
+            const vStep = cellSize * camera.zoom;
+            const cx = width / 2 + camera.x, cy = height / 2 + camera.y;
 
-            const minX = Math.floor(-centerX / vStep), maxX = Math.ceil((width - centerX) / vStep);
-            const minY = Math.floor(-centerY / vStep), maxY = Math.ceil((height - centerY) / vStep);
+            // Draw Infinite Grid
+            ctx.strokeStyle = '#333';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            const startX = Math.floor((-cx) / vStep);
+            const endX = Math.ceil((width - cx) / vStep);
+            const startY = Math.floor((-cy) / vStep);
+            const endY = Math.ceil((height - cy) / vStep);
 
-            if ((maxX - minX) * (maxY - minY) < 4000) {
-                for (let x = minX; x <= maxX; x++) {
-                    for (let y = minY; y <= maxY; y++) {
-                        ctx.fillStyle = (x + y) % 2 === 0 ? '#eee' : '#999';
-                        ctx.fillRect(centerX + x * vStep, centerY + y * vStep, vStep, vStep);
-                        if (selectedPiece && isValidMove(selectedPiece, x, y)) {
-                            ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
-                            ctx.fillRect(centerX + x * vStep + 2, centerY + y * vStep + 2, vStep - 4, vStep - 4);
-                        }
-                    }
-                }
+            for (let x = startX; x <= endX; x++) {
+                ctx.moveTo(cx + x * vStep, 0); ctx.lineTo(cx + x * vStep, height);
             }
-
-            if (selectedPiece) {
-                ctx.strokeStyle = 'red'; ctx.lineWidth = 3;
-                ctx.strokeRect(centerX + selectedPiece.x * vStep, centerY + selectedPiece.y * vStep, vStep, vStep);
+            for (let y = startY; y <= endY; y++) {
+                ctx.moveTo(0, cy + y * vStep); ctx.lineTo(width, cy + y * vStep);
             }
+            ctx.stroke();
 
-            ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = `${vStep * 0.7}px serif`;
+            // Draw Pieces
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = `${vStep * 0.8}px serif`;
+
             board.forEach(p => {
-                ctx.fillStyle = 'black';
-                ctx.fillText(PIECES[p.color][p.type], centerX + (p.x + 0.5) * vStep, centerY + (p.y + 0.5) * vStep);
+                ctx.fillStyle = p.color === 'white' ? 'white' : '#ff4444';
+                ctx.fillText(PIECES[p.color][p.type], cx + (p.x + 0.5) * vStep, cy + (p.y + 0.5) * vStep);
             });
 
-            if (gameOver) {
-                ctx.fillStyle = 'rgba(0,0,0,0.8)'; ctx.fillRect(0, 0, width, height);
-                ctx.fillStyle = 'white'; ctx.font = 'bold 30px sans-serif';
-                ctx.fillText(`${winner.toUpperCase()} WINS!`, width / 2, height / 2);
-                ctx.font = '15px sans-serif'; ctx.fillText('Click to Restart', width / 2, height / 2 + 40);
+            // Highlight Selection
+            if (selectedPiece) {
+                ctx.strokeStyle = 'gold';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(cx + selectedPiece.x * vStep, cy + selectedPiece.y * vStep, vStep, vStep);
             }
+
             requestAnimationFrame(draw);
         }
 
-        // 8. INPUTS
-        canvas.addEventListener('mousedown', e => { isDragging = false; lastMouse = { x: e.clientX, y: e.clientY }; });
-        canvas.addEventListener('mousemove', e => { if (e.buttons === 1) { isDragging = true; camera.x += e.clientX - lastMouse.x; camera.y += e.clientY - lastMouse.y; lastMouse = { x: e.clientX, y: e.clientY }; } });
-        canvas.addEventListener('mouseup', e => { if (!isDragging) handleGameClick(screenToWorld(e.clientX, e.clientY)); });
-        canvas.addEventListener('wheel', e => { camera.zoom = Math.max(0.1, Math.min(camera.zoom * (e.deltaY > 0 ? 0.9 : 1.1), 5)); });
-
-        window.addEventListener('resize', resize);
-        resize(); initBoard(); draw(); initMultiplayer();
+        window.addEventListener('resize', () => { width = canvas.width = window.innerWidth; height = canvas.height = window.innerHeight; });
+        window.dispatchEvent(new Event('resize'));
+        draw();
     </script>
 </body>
 </html>
