@@ -118,12 +118,11 @@
             databaseURL: "https://chess-2-2a1c9-default-rtdb.europe-west1.firebasedatabase.app/"
         };
 
-        // Initialize Firebase safely
         let db = null;
         try {
             firebase.initializeApp(firebaseConfig);
             db = firebase.database();
-        } catch (e) { console.error("Firebase load error"); }
+        } catch (e) { console.error("Firebase load error", e); }
 
         // 2. GLOBALS
         let myRoomId = Math.floor(1000 + Math.random() * 9000).toString();
@@ -140,11 +139,9 @@
         let camera = { x: 0, y: 0, zoom: 1 };
         let isDragging = false, lastMouse = { x: 0, y: 0 }, touchStartPos = { x: 0, y: 0 };
         let initialPinchDist = null, lastZoom = 1;
-        let gameOver = false;
-        let winner = null;
+        let gameOver = false, winner = null;
 
-        // NEW: Role logic
-        let myColor = 'white'; // Default to white so it loads immediately
+        let myColor = 'white';
         let selectedPiece = null, turn = 'white', board = [];
 
         const PIECES = {
@@ -152,12 +149,11 @@
             black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
         };
 
-        // 3. GAME RULES & VALIDATION
+        // 3. GAME RULES
         function isValidMove(piece, targetX, targetY) {
-            const dx = targetX - piece.x;
-            const dy = targetY - piece.y;
-            const absDx = Math.abs(dx);
-            const absDy = Math.abs(dy);
+            if (!piece) return false;
+            const dx = targetX - piece.x, dy = targetY - piece.y;
+            const absDx = Math.abs(dx), absDy = Math.abs(dy);
 
             const isPathClear = (stepX, stepY) => {
                 if (!isFinite(stepX) || !isFinite(stepY) || (stepX === 0 && stepY === 0)) return false;
@@ -190,33 +186,16 @@
         function checkWinCondition() {
             const whiteKings = board.filter(p => p.color === 'white' && p.type === 'k').length;
             const blackKings = board.filter(p => p.color === 'black' && p.type === 'k').length;
-
             if (whiteKings === 0 || blackKings === 0) {
                 gameOver = true;
                 winner = whiteKings > 0 ? 'White' : 'Black';
-
-                // Update Firebase so both players see the game over screen
-                if (roomRef) {
-                    roomRef.update({
-                        status: 'GAMEOVER',
-                        winner: winner
-                    });
-                }
+                if (roomRef) roomRef.update({ status: 'GAMEOVER', winner: winner });
             }
         }
 
         function resetGame() {
-            gameOver = false;
-            winner = null;
-            initBoard();
-            if (roomRef) {
-                roomRef.update({
-                    board: board,
-                    turn: 'white',
-                    status: 'PLAYING',
-                    winner: null
-                });
-            }
+            gameOver = false; winner = null; initBoard();
+            if (roomRef) roomRef.update({ board, turn: 'white', status: 'PLAYING', winner: null });
         }
 
         // 4. CORE LOGIC
@@ -233,18 +212,14 @@
 
         function screenToWorld(clientX, clientY) {
             const rect = canvas.getBoundingClientRect();
-            const x = clientX - rect.left, y = clientY - rect.top;
             return {
-                x: Math.floor((x - width / 2 - camera.x) / (cellSize * camera.zoom)),
-                y: Math.floor((y - height / 2 - camera.y) / (cellSize * camera.zoom))
+                x: Math.floor((clientX - rect.left - width / 2 - camera.x) / (cellSize * camera.zoom)),
+                y: Math.floor((clientY - rect.top - height / 2 - camera.y) / (cellSize * camera.zoom))
             };
         }
 
         function handleGameClick(worldPos) {
-            if (gameOver) {
-                resetGame();
-                return;
-            }
+            if (gameOver) { resetGame(); return; }
             if (turn !== myColor) return;
             const pieceAtPos = board.find(p => p.x === worldPos.x && p.y === worldPos.y);
 
@@ -256,77 +231,41 @@
                     board = board.filter(p => !(p.x === worldPos.x && p.y === worldPos.y));
                     const p = board.find(p => p.x === selectedPiece.x && p.y === selectedPiece.y);
                     if (p) { p.x = worldPos.x; p.y = worldPos.y; }
-                    selectedPiece = null; turn = (turn === 'white' ? 'black' : 'white');
+
+                    checkWinCondition();
+                    selectedPiece = null;
+                    turn = (turn === 'white' ? 'black' : 'white');
                     if (roomRef) roomRef.update({ board, turn });
                     updateTurnDisplay();
                 } else { selectedPiece = null; }
             } else if (pieceAtPos && pieceAtPos.color === turn) {
                 selectedPiece = pieceAtPos;
             }
-            if (isValidMove(selectedPiece, worldPos.x, worldPos.y)) {
-                // 1. Perform Capture
-                board = board.filter(p => !(p.x === worldPos.x && p.y === worldPos.y));
-
-                // 2. Move Piece
-                const p = board.find(p => p.x === selectedPiece.x && p.y === selectedPiece.y);
-                if (p) { p.x = worldPos.x; p.y = worldPos.y; }
-
-                // 3. Check if that move killed the last King
-                checkWinCondition();
-
-                selectedPiece = null;
-                turn = (turn === 'white' ? 'black' : 'white');
-
-                if (roomRef) roomRef.update({ board, turn });
-                updateTurnDisplay();
-            }
         }
 
         // 5. NETWORKING
-
         function initMultiplayer() {
-            if (!db) {
-                statusDisplay.innerText = "Offline: Firebase Blocked";
-                return;
-            }
-
-            // 1. Create your own room so others can see YOU
+            if (!db) { statusDisplay.innerText = "Offline Mode"; return; }
             initAsHost(myRoomId);
-
-            // 2. Listen for OTHER rooms so you can see THEM
-            db.ref('rooms').on('value', (snapshot) => {
-                roomsContainer.innerHTML = ""; // Clear list
-                let availableRooms = 0;
-
-                snapshot.forEach((child) => {
+            db.ref('rooms').on('value', (snap) => {
+                roomsContainer.innerHTML = "";
+                let count = 0;
+                snap.forEach((child) => {
                     const data = child.val();
-
-                    // CRITICAL: Only show rooms that:
-                    // - Are NOT your own room
-                    // - Do NOT have a guest yet (not full)
                     if (child.key !== currentRoomId && data && !data.guestJoined) {
-                        availableRooms++;
+                        count++;
                         const btn = document.createElement('button');
                         btn.className = 'lobby-item';
-                        btn.innerHTML = `<span>⚡ Join ${data.hostName || 'Player'}</span>`;
-
-                        btn.onclick = () => {
-                            console.log("Attempting to join:", child.key);
-                            joinOtherRoom(child.key);
-                        };
-
+                        btn.innerHTML = `⚡ Join Player ${child.key}`;
+                        btn.onclick = () => joinOtherRoom(child.key);
                         roomsContainer.appendChild(btn);
                     }
                 });
-
-                if (availableRooms === 0) {
-                    roomsContainer.innerHTML = "<div style='color:#666; font-size:0.8em;'>Waiting for players...</div>";
-                }
+                if (count === 0) roomsContainer.innerHTML = "<div style='color:#666; font-size:0.8em;'>Searching...</div>";
             });
         }
 
         function initAsHost(id) {
-            if (!db) return;
             currentRoomId = id; roomRef = db.ref('rooms/' + id);
             myColor = 'white';
             roomRef.set({ board, turn: 'white', hostColor: 'white', guestColor: 'black', guestJoined: false });
@@ -335,26 +274,15 @@
         }
 
         function joinOtherRoom(targetId) {
-            // Stop hosting your own room to save resources
             if (roomRef) roomRef.off();
             db.ref('rooms/' + myRoomId).remove();
-
-            currentRoomId = targetId;
-            roomRef = db.ref('rooms/' + targetId);
-
+            currentRoomId = targetId; roomRef = db.ref('rooms/' + targetId);
             roomRef.once('value').then(snap => {
                 const d = snap.val();
                 if (d) {
-                    // Assign color based on what the host ISN'T
-                    myColor = (d.hostColor === 'white') ? 'black' : 'white';
-
-                    roomRef.update({
-                        guestJoined: true,
-                        guestColor: myColor
-                    });
-
+                    myColor = d.hostColor === 'white' ? 'black' : 'white';
+                    roomRef.update({ guestJoined: true, guestColor: myColor });
                     roomRef.on('value', syncState);
-                    statusDisplay.innerText = `Connected! Role: ${myColor}`;
                 }
             });
         }
@@ -362,20 +290,12 @@
         function syncState(snap) {
             const d = snap.val();
             if (!d) return;
-            board = d.board || [];
-            turn = d.turn || 'white';
-
-            // Sync Game Over state
-            if (d.status === 'GAMEOVER') {
-                gameOver = true;
-                winner = d.winner;
-            } else {
-                gameOver = false;
-            }
-
+            board = d.board || []; turn = d.turn || 'white';
+            gameOver = d.status === 'GAMEOVER';
+            winner = d.winner || null;
             myColor = (currentRoomId === myRoomId) ? d.hostColor : d.guestColor;
             updateTurnDisplay();
-            statusDisplay.innerText = `Status: Online | You: ${myColor}`;
+            statusDisplay.innerText = `Online | You: ${myColor.toUpperCase()}`;
         }
 
         function updateTurnDisplay() {
@@ -385,10 +305,7 @@
         }
 
         // 6. DRAWING
-        function resize() {
-            width = canvas.width = window.innerWidth;
-            height = canvas.height = window.innerHeight;
-        }
+        function resize() { width = canvas.width = window.innerWidth; height = canvas.height = window.innerHeight; }
 
         function draw() {
             ctx.clearRect(0, 0, width, height);
@@ -415,27 +332,18 @@
                 ctx.fillStyle = 'black';
                 ctx.fillText(PIECES[p.color][p.type], width / 2 + camera.x + (p.x + 0.5) * vStep, height / 2 + camera.y + (p.y + 0.5) * vStep);
             });
-            requestAnimationFrame(draw);
+
             if (gameOver) {
-                // Darken the background
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
                 ctx.fillRect(0, 0, width, height);
-
-                // Draw Text
-                ctx.fillStyle = 'white';
-                ctx.font = 'bold 40px sans-serif';
+                ctx.fillStyle = 'white'; ctx.font = 'bold 40px sans-serif';
                 ctx.fillText(`GAME OVER`, width / 2, height / 2 - 40);
-
-                ctx.fillStyle = winner === 'White' ? '#fff' : '#aaa';
                 ctx.font = '30px sans-serif';
                 ctx.fillText(`${winner} Wins!`, width / 2, height / 2 + 10);
-
                 ctx.font = '16px sans-serif';
-                ctx.fillText(`Tap anywhere to reset`, width / 2, height / 2 + 60);
+                ctx.fillText(`Tap anywhere to restart`, width / 2, height / 2 + 60);
             }
-
             requestAnimationFrame(draw);
-        }
         }
 
         // 7. INPUTS
@@ -444,13 +352,11 @@
         canvas.addEventListener('mouseup', e => { if (!isDragging) handleGameClick(screenToWorld(e.clientX, e.clientY)); });
 
         canvas.addEventListener('touchstart', e => {
-            if (e.cancelable) e.preventDefault();
             if (e.touches.length === 1) { isDragging = false; touchStartPos = lastMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }
             else if (e.touches.length === 2) { isDragging = true; initialPinchDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY); lastZoom = camera.zoom; }
         }, { passive: false });
 
         canvas.addEventListener('touchmove', e => {
-            if (e.cancelable) e.preventDefault();
             if (e.touches.length === 1 && !initialPinchDist) {
                 camera.x += e.touches[0].clientX - lastMouse.x; camera.y += e.touches[0].clientY - lastMouse.y;
                 if (Math.hypot(e.touches[0].clientX - touchStartPos.x, e.touches[0].clientY - touchStartPos.y) > 10) isDragging = true;
@@ -461,13 +367,11 @@
             }
         }, { passive: false });
 
-        canvas.addEventListener('touchend', e => { if (e.touches.length === 0 && !isDragging) handleGameClick(screenToWorld(touchStartPos.x, touchStartPos.y)); }, { passive: false });
+        canvas.addEventListener('touchend', e => { if (e.touches.length === 0 && !isDragging) handleGameClick(screenToWorld(touchStartPos.x, touchStartPos.y)); });
         window.addEventListener('resize', resize);
         canvas.addEventListener('wheel', e => camera.zoom = Math.max(0.1, Math.min(camera.zoom * (e.deltaY > 0 ? 0.9 : 1.1), 5)));
 
-        // START
         resize(); initBoard(); draw(); initMultiplayer();
-        if (db) initAsHost(myRoomId); else statusDisplay.innerText = "Offline Mode";
     </script>
 </body>
 </html>
