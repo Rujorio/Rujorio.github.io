@@ -281,6 +281,34 @@
         });
 
         // --- 3. LOBBY & SYNC ---
+        // --- LOBBY SCANNER ---
+        const roomListEl = document.getElementById('room-list');
+
+        db.ref('rooms').on('value', (snapshot) => {
+            roomListEl.innerHTML = ""; // Clear current list
+            const rooms = snapshot.val();
+
+            if (!rooms) {
+                roomListEl.innerHTML = "No active rooms. Create one!";
+                return;
+            }
+
+            Object.keys(rooms).forEach(roomName => {
+                const roomData = rooms[roomName];
+                const playerCount = roomData.players ? Object.keys(roomData.players).length : 0;
+
+                // Only show rooms that aren't full (optional) or just show all
+                const roomItem = document.createElement('div');
+                roomItem.className = 'room-item';
+                roomItem.innerHTML = `<strong>${roomName}</strong> — ${playerCount} players`;
+                roomItem.onclick = () => {
+                    document.getElementById('room-name').value = roomName;
+                    joinRoom(roomName);
+                };
+                roomListEl.appendChild(roomItem);
+            });
+        });
+
         function joinRoom(name) {
             if (!name) return;
             if (roomRef) roomRef.off();
