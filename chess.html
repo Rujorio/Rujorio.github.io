@@ -286,12 +286,20 @@
                     const turnEl = document.getElementById('ui-turn');
                     turnEl.innerText = `TURN: ${turn.toUpperCase()}`;
 
-                    // Visual indicator: Pulse the turn text if it's YOUR turn
+                    // Remove old pulse classes first
+                    turnEl.classList.remove('pulse-white', 'pulse-red');
+
                     if (turn === myColor) {
-                        turnEl.style.color = "#00ff00";
-                        turnEl.style.textShadow = "0 0 10px #00ff00";
-                        turnEl.classList.add('pulse'); // You can add a CSS pulse animation
+                        if (turn === 'white') {
+                            turnEl.style.color = "#fff";
+                            turnEl.classList.add('pulse-white');
+                        } else {
+                            turnEl.style.color = "#ff4747";
+                            turnEl.classList.add('pulse-red');
+                        }
+                        turnEl.style.textShadow = `0 0 10px ${turn === 'white' ? '#fff' : '#ff4747'}`;
                     } else {
+                        // Not your turn: static colors
                         turnEl.style.color = (turn === 'white') ? "#fff" : "#ff4747";
                         turnEl.style.textShadow = "none";
                     }
