@@ -310,6 +310,14 @@
         });
 
         function joinRoom(name) {
+            playersRef.once('value', snap => {
+                const count = snap.numChildren();
+                if (count === 0) {
+                    myColor = 'white';
+                    initBoard(name);
+                    // NEW: If the creator leaves, the whole room vanishes
+                    roomRef.onDisconnect().remove();
+                }
             if (!name) return;
             if (roomRef) roomRef.off();
 
