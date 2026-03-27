@@ -289,32 +289,36 @@
         }
 
         function spawnExtraPieces(type, color, count, direction = "outer") {
-            const myPieces = board.filter(p => p.color === color && p.type === type);
             const pDir = (color === 'white') ? -1 : 1;
+            const spawnY = (color === 'white') ? 7 : 0;
 
-            if (direction === "forward") {
-                for (let i = 1; i <= count; i++) {
-                    myPieces.forEach(pawn => {
-                        let targetY = pawn.y + (pDir * i);
-                        let targetX = pawn.x;
-                        if (!board.find(p => p.x === targetX && p.y === targetY)) {
-                            board.push({ x: targetX, y: targetY, type: type, color: color });
-                        }
-                    });
-                }
-            } else {
-                myPieces.sort((a, b) => a.x - b.x);
-                let leftX = myPieces.length > 0 ? myPieces[0].x - 1 : -1;
-                let rightX = myPieces.length > 0 ? myPieces[myPieces.length - 1].x + 1 : 8;
-                const spawnY = (color === 'white') ? 7 : 0;
+            for (let i = 0; i < count; i++) {
+                let targetX, targetY;
 
-                for (let i = 0; i < count; i++) {
-                    let targetX = (i % 2 === 0) ? leftX : rightX;
-                    while (board.find(p => p.x === targetX && p.y === spawnY)) {
-                        if (i % 2 === 0) targetX--; else targetX++;
+                if (direction === "forward") {
+                    const myPawns = board.filter(p => p.color === color && p.type === 'p');
+                    if (myPawns.length > 0) {
+                        const p = myPawns[i % myPawns.length];
+                        targetX = p.x;
+                        targetY = p.y + pDir;
+                    } else {
+                        targetX = i; targetY = spawnY + pDir;
                     }
-                    board.push({ x: targetX, y: spawnY, type: type, color: color });
-                    if (i % 2 === 0) leftX = targetX - 1; else rightX = targetX + 1;
+                } else {
+                    // CIRCUIT BREAKER: If it can't find a spot in 20 tries, it stops.
+                    let attemptX = (i % 2 === 0) ? -1 - Math.floor(i / 2) : 8 + Math.floor(i / 2);
+                    let safety = 0;
+                    while (board.find(p => p.x === attemptX && p.y === spawnY) && safety < 20) {
+                        if (i % 2 === 0) attemptX--; else attemptX++;
+                        safety++;
+                    }
+                    targetX = attemptX;
+                    targetY = spawnY;
+                }
+
+                // Final check to prevent stacking pieces
+                if (!board.find(p => p.x === targetX && p.y === targetY)) {
+                    board.push({ x: targetX, y: targetY, type: type, color: color });
                 }
             }
         }
@@ -403,10 +407,13 @@
                 });
 
                 if (allPowerups.length > 0) {
-                    availableCards = getWeightedRandomCards(allPowerups, 2);
+                    // Ensure we don't try to pick more cards than exist
+                    const countToPick = Math.min(2, allPowerups.length);
+                    availableCards = getWeightedRandomCards(allPowerups, countToPick);
                     showCardUI();
                 } else {
                     isChoosingCard = false;
+                    console.warn("No powerups found in Firebase 'powerups' node.");
                 }
             } catch (e) {
                 isChoosingCard = false;
