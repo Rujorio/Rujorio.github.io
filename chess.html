@@ -176,21 +176,88 @@
             return { x: worldX, y: worldY };
         }
 
+        function isValidMove(piece, targetX, targetY) {
+            const dx = targetX - piece.x;
+            const dy = targetY - piece.y;
+            const absDx = Math.abs(dx);
+            const absDy = Math.abs(dy);
+
+            // Helper: Check if a path is clear (for sliding pieces)
+            const isPathClear = (stepX, stepY) => {
+                let curX = piece.x + stepX;
+                let curY = piece.y + stepY;
+                while (curX !== targetX || curY !== targetY) {
+                    if (board.find(p => p.x === curX && p.y === curY)) return false;
+                    curX += stepX;
+                    curY += stepY;
+                }
+                return true;
+            };
+
+            switch (piece.type) {
+                case 'p': // Pawn
+                    const dir = piece.color === 'white' ? -1 : 1;
+                    const startRow = piece.color === 'white' ? 6 : 1;
+                    const pieceAtTarget = board.find(p => p.x === targetX && p.y === targetY);
+
+                    // Standard move forward
+                    if (dx === 0 && !pieceAtTarget) {
+                        if (dy === dir) return true;
+                        if (piece.y === startRow && dy === 2 * dir && !board.find(p => p.x === piece.x && p.y === piece.y + dir)) return true;
+                    }
+                    // Capture
+                    if (absDx === 1 && dy === dir && pieceAtTarget && pieceAtTarget.color !== piece.color) return true;
+                    return false;
+
+                case 'r': // Rook
+                    if (dx !== 0 && dy !== 0) return false;
+                    return isPathClear(dx === 0 ? 0 : dx / absDx, dy === 0 ? 0 : dy / absDy);
+
+                case 'n': // Knight
+                    return (absDx === 1 && absDy === 2) || (absDx === 2 && absDy === 1);
+
+                case 'b': // Bishop
+                    if (absDx !== absDy) return false;
+                    return isPathClear(dx / absDx, dy / absDy);
+
+                case 'q': // Queen
+                    if (dx !== 0 && dy !== 0 && absDx !== absDy) return false;
+                    return isPathClear(dx === 0 ? 0 : dx / absDx, dy === 0 ? 0 : dy / absDy);
+
+                case 'k': // King
+                    return absDx <= 1 && absDy <= 1;
+            }
+            return false;
+        }
+
         function handleGameClick(worldPos) {
             const pieceAtPos = board.find(p => p.x === worldPos.x && p.y === worldPos.y);
+
             if (selectedPiece) {
-                if (!pieceAtPos || pieceAtPos.color !== selectedPiece.color) {
+                // If clicking the same spot or another piece of the same color, just switch selection
+                if (pieceAtPos && pieceAtPos.color === selectedPiece.color) {
+                    selectedPiece = pieceAtPos;
+                    return;
+                }
+
+                // Check if the move follows chess rules
+                if (isValidMove(selectedPiece, worldPos.x, worldPos.y)) {
+                    // Remove captured piece if it exists
+                    board = board.filter(p => !(p.x === worldPos.x && p.y === worldPos.y));
+
+                    // Update the piece position
                     const piece = board.find(p => p.x === selectedPiece.x && p.y === selectedPiece.y);
                     if (piece) {
-                        board = board.filter(p => !(p.x === worldPos.x && p.y === worldPos.y));
-                        piece.x = worldPos.x; piece.y = worldPos.y;
+                        piece.x = worldPos.x;
+                        piece.y = worldPos.y;
                         selectedPiece = null;
                         turn = (turn === 'white') ? 'black' : 'white';
                         updateTurnDisplay();
                         syncToFirebase();
                     }
                 } else {
-                    selectedPiece = (pieceAtPos.color === turn) ? pieceAtPos : null;
+                    // Move was illegal, deselect
+                    selectedPiece = null;
                 }
             } else if (pieceAtPos && pieceAtPos.color === turn) {
                 selectedPiece = pieceAtPos;
