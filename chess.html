@@ -370,18 +370,23 @@
         function syncState(snap) {
             const d = snap.val();
             if (!d) return;
+
             board = d.board || [];
             turn = d.turn || 'white';
             gameOver = d.status === 'GAMEOVER';
             winner = d.winner || null;
 
-            // Check if a card selection should trigger for the CURRENT player
+            // Check if the move count actually changed in Firebase
             if (d.moveCount !== undefined && d.moveCount !== moveCount) {
-                if (d.moveCount > 0 && d.moveCount % 6 === 0) {
-                    // Only show UI to the player whose turn it just became
-                    if (turn === myColor) triggerCardSelection();
-                }
                 moveCount = d.moveCount;
+
+                // Trigger cards every 6 moves
+                if (moveCount > 0 && moveCount % 6 === 0) {
+                    // Only the player whose turn it is sees the cards
+                    if (turn === myColor && !isChoosingCard) {
+                        triggerCardSelection();
+                    }
+                }
             }
 
             updateTurnDisplay();
@@ -481,34 +486,56 @@
 
         function draw() {
             ctx.clearRect(0, 0, width, height);
-            const vStep = cellSize * camera.zoom;
-            const minX = Math.floor((-width / 2 - camera.x) / vStep), maxX = Math.ceil((width / 2 - camera.x) / vStep);
-            const minY = Math.floor((-height / 2 - camera.y) / vStep), maxY = Math.ceil((height / 2 - camera.y) / vStep);
 
-            for (let x = minX; x <= maxX; x++) {
-                for (let y = minY; y <= maxY; y++) {
-                    ctx.fillStyle = (x + y) % 2 === 0 ? '#eee' : '#999';
-                    ctx.fillRect(width / 2 + camera.x + x * vStep, height / 2 + camera.y + y * vStep, vStep, vStep);
-                    if (selectedPiece && isValidMove(selectedPiece, x, y)) {
-                        ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
-                        ctx.fillRect(width / 2 + camera.x + x * vStep + 2, height / 2 + camera.y + y * vStep + 2, vStep - 4, vStep - 4);
+            // SAFETY: If zoom or cellSize somehow hit 0, this prevents an infinite loop
+            const vStep = Math.max(1, cellSize * (camera.zoom || 1));
+
+            // This math ensures the grid coordinates stay relative to your screen center
+            const centerX = width / 2 + (camera.x || 0);
+            const centerY = height / 2 + (camera.y || 0);
+
+            const minX = Math.floor(-centerX / vStep);
+            const maxX = Math.ceil((width - centerX) / vStep);
+            const minY = Math.floor(-centerY / vStep);
+            const maxY = Math.ceil((height - centerY) / vStep);
+
+            // CIRCUIT BREAKER: If the loop tries to draw more than 5,000 squares, 
+            // it skips the grid for 1 frame instead of crashing your browser.
+            const totalSquares = (maxX - minX) * (maxY - minY);
+            if (totalSquares > 0 && totalSquares < 5000) {
+                for (let x = minX; x <= maxX; x++) {
+                    for (let y = minY; y <= maxY; y++) {
+                        ctx.fillStyle = (x + y) % 2 === 0 ? '#eee' : '#999';
+                        ctx.fillRect(centerX + x * vStep, centerY + y * vStep, vStep, vStep);
+
+                        if (selectedPiece && isValidMove(selectedPiece, x, y)) {
+                            ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
+                            ctx.fillRect(centerX + x * vStep + 2, centerY + y * vStep + 2, vStep - 4, vStep - 4);
+                        }
                     }
                 }
             }
+
             if (selectedPiece) {
-                ctx.strokeStyle = 'red'; ctx.lineWidth = 3;
-                ctx.strokeRect(width / 2 + camera.x + selectedPiece.x * vStep, height / 2 + camera.y + selectedPiece.y * vStep, vStep, vStep);
+                ctx.strokeStyle = 'red';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(centerX + selectedPiece.x * vStep, centerY + selectedPiece.y * vStep, vStep, vStep);
             }
-            ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = `${vStep * 0.7}px serif`;
+
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = `${vStep * 0.7}px serif`;
+
             board.forEach(p => {
                 ctx.fillStyle = 'black';
-                ctx.fillText(PIECES[p.color][p.type], width / 2 + camera.x + (p.x + 0.5) * vStep, height / 2 + camera.y + (p.y + 0.5) * vStep);
+                ctx.fillText(PIECES[p.color][p.type], centerX + (p.x + 0.5) * vStep, centerY + (p.y + 0.5) * vStep);
             });
 
             if (gameOver) {
                 ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
                 ctx.fillRect(0, 0, width, height);
-                ctx.fillStyle = 'white'; ctx.font = 'bold 40px sans-serif';
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 40px sans-serif';
                 ctx.fillText(`GAME OVER`, width / 2, height / 2 - 40);
                 ctx.font = '30px sans-serif';
                 ctx.fillText(`${winner} Wins!`, width / 2, height / 2 + 10);
