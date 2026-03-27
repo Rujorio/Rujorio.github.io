@@ -88,6 +88,38 @@
             margin-bottom: 5px;
             display: block;
         }
+
+        .card {
+            background: #2c3e50;
+            border: 2px solid gold;
+            border-radius: 12px;
+            padding: 20px;
+            width: 200px;
+            text-align: center;
+            cursor: pointer;
+            transition: transform 0.2s, background 0.2s;
+        }
+
+            .card:hover {
+                transform: scale(1.05);
+                background: #34495e;
+            }
+
+            .card h3 {
+                color: #f1c40f;
+                margin-top: 0;
+            }
+
+            .card p {
+                font-size: 0.9em;
+                color: #ecf0f1;
+            }
+
+            .card small {
+                color: #95a5a6;
+                font-weight: bold;
+            }
+
     </style>
 </head>
 <body>
@@ -102,7 +134,10 @@
             <div id="rooms-container"></div>
         </div>
     </div>
-
+    <div id="card-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:1000; flex-direction:column; align-items:center; justify-content:center;">
+        <h1 style="color:gold; margin-bottom:20px;">Choose a Power-up</h1>
+        <div id="card-container" style="display:flex; gap:20px;"></div>
+    </div>
     <canvas id="gameCanvas"></canvas>
 
     <script>
@@ -140,6 +175,10 @@
         let isDragging = false, lastMouse = { x: 0, y: 0 }, touchStartPos = { x: 0, y: 0 };
         let initialPinchDist = null, lastZoom = 1;
         let gameOver = false, winner = null;
+
+        let moveCount = 0;
+        let isChoosingCard = false;
+        let availableCards = []; // The two cards offered to the player
 
         let myColor = 'white';
         let selectedPiece = null, turn = 'white', board = [];
@@ -181,6 +220,14 @@
                 case 'k': return absDx <= 1 && absDy <= 1;
             }
             return false;
+            moveCount++;
+            if (roomRef) {
+                roomRef.update({
+                    board: board,
+                    turn: turn,
+                    moveCount: moveCount // Sync the count
+                });
+            }
         }
 
         function checkWinCondition() {
@@ -243,6 +290,42 @@
             }
         }
 
+        function spawnExtraPieces(type, color, count, direction = "outer") {
+            const myPieces = board.filter(p => p.color === color && p.type === type);
+            const pDir = (color === 'white') ? -1 : 1; // White moves -1, Black moves +1
+
+            if (direction === "forward") {
+                // We can use 'count' to decide how many rows to spawn (e.g., 1 or 2)
+                for (let i = 1; i <= count; i++) {
+                    myPieces.forEach(pawn => {
+                        let targetY = pawn.y + (pDir * i); // Offset increases with each row
+                        let targetX = pawn.x;
+
+                        if (!board.find(p => p.x === targetX && p.y === targetY)) {
+                            board.push({ x: targetX, y: targetY, type: type, color: color });
+                        }
+                    });
+                }
+            } else {
+                // OUTER LOGIC (Rooks/Kings) - Your original code
+                myPieces.sort((a, b) => a.x - b.x);
+                let leftX = myPieces.length > 0 ? myPieces[0].x - 1 : -1;
+                let rightX = myPieces.length > 0 ? myPieces[myPieces.length - 1].x + 1 : 8;
+                const spawnY = (color === 'white') ? 7 : 0;
+
+                for (let i = 0; i < count; i++) {
+                    let targetX = (i % 2 === 0) ? leftX : rightX;
+                    while (board.find(p => p.x === targetX && p.y === spawnY)) {
+                        if (i % 2 === 0) targetX--;
+                        else targetX++;
+                    }
+                    board.push({ x: targetX, y: spawnY, type: type, color: color });
+                    if (i % 2 === 0) leftX = targetX - 1;
+                    else rightX = targetX + 1;
+                }
+            }
+        }
+
         // 5. NETWORKING
         function initMultiplayer() {
             if (!db) { statusDisplay.innerText = "Offline Mode"; return; }
@@ -296,6 +379,13 @@
             myColor = (currentRoomId === myRoomId) ? d.hostColor : d.guestColor;
             updateTurnDisplay();
             statusDisplay.innerText = `Online | You: ${myColor.toUpperCase()}`;
+            if (d.moveCount !== undefined) {
+                // If moveCount just hit a multiple of 6 (and increased)
+                if (d.moveCount > 0 && d.moveCount % 6 === 0 && d.moveCount !== moveCount) {
+                    triggerCardSelection();
+                }
+                moveCount = d.moveCount;
+            }
         }
 
         function updateTurnDisplay() {
@@ -304,7 +394,107 @@
             turnDisplay.style.color = isMe ? "#00ff00" : "#fff";
         }
 
-        // 6. DRAWING
+        // 6. POWERUPS
+        async function triggerCardSelection() {
+            if (isChoosingCard) return;
+
+            const snapshot = await db.ref('powerups').once('value');
+            const allPowerups = [];
+            snapshot.forEach(child => {
+                allPowerups.push({ id: child.key, ...child.val() });
+            });
+
+            // Use the weighted math instead of simple random
+            availableCards = getWeightedRandomCards(allPowerups, 2);
+
+            isChoosingCard = true;
+            showCardUI();
+        }
+
+        function showCardUI() {
+            const overlay = document.getElementById('card-overlay');
+            const container = document.getElementById('card-container');
+            overlay.style.display = 'flex';
+            container.innerHTML = '';
+
+            availableCards.forEach(card => {
+                const cardEl = document.createElement('div');
+                cardEl.className = 'card'; // Add CSS for rarity colors!
+                cardEl.innerHTML = `
+                <h3>${card.name}</h3>
+                <p>${card.desc}</p>
+                <small>${card.rarity.toUpperCase()}</small>
+            `;
+                cardEl.onclick = () => applyPowerup(card);
+                container.appendChild(cardEl);
+            });
+        }
+
+        function applyPowerup(card) {
+            console.log("Player chose:", card.name);
+
+            // This is where the magic happens:
+            executePowerupLogic(card.id);
+
+            isChoosingCard = false;
+            document.getElementById('card-overlay').style.display = 'none';
+
+            statusDisplay.innerText = `Activated: ${card.name}!`;
+        }
+
+        function getWeightedRandomCards(allCards, count) {
+            let selected = [];
+            let tempPool = [...allCards];
+
+            for (let i = 0; i < count; i++) {
+                // 1. Calculate total weight of remaining cards
+                let totalWeight = tempPool.reduce((sum, card) => sum + (card.weight || 10), 0);
+
+                // 2. Pick a random threshold
+                let random = Math.random() * totalWeight;
+                let cursor = 0;
+
+                for (let j = 0; j < tempPool.length; j++) {
+                    cursor += (tempPool[j].weight || 10);
+                    if (random <= cursor) {
+                        // 3. Select this card and remove from temp pool so it's not picked twice
+                        selected.push(tempPool[j]);
+                        tempPool.splice(j, 1);
+                        break;
+                    }
+                }
+            }
+            return selected;
+        }
+
+        function executePowerupLogic(cardId) {
+            // We use myColor because only the person who picked the card gets the pieces
+            const player = myColor;
+
+            switch (cardId) {
+                case 'p1':
+                    // This will spawn 2 Rooks on the outer edges
+                    spawnExtraPieces('r', player, 2, "outer");
+                    break;
+
+                case 'p2':
+                    // This will spawn 1 extra King on the outer edge
+                    spawnExtraPieces('k', player, 1, "outer");
+                    break;
+
+                case 'p3':
+                // This will add another row of pawns in front of the existing ones
+                    spawnExtraPieces('p', player, 1, "forward");
+                    break;
+            }
+
+            // Force sync the board to Firebase so the opponent sees the new Rooks
+            if (roomRef) {
+                roomRef.update({ board: board });
+            }
+        }
+
+        // 7. DRAWING
         function resize() { width = canvas.width = window.innerWidth; height = canvas.height = window.innerHeight; }
 
         function draw() {
@@ -346,7 +536,7 @@
             requestAnimationFrame(draw);
         }
 
-        // 7. INPUTS
+        // 8. INPUTS
         canvas.addEventListener('mousedown', e => { isDragging = false; lastMouse = { x: e.clientX, y: e.clientY }; });
         canvas.addEventListener('mousemove', e => { if (e.buttons === 1) { isDragging = true; camera.x += e.clientX - lastMouse.x; camera.y += e.clientY - lastMouse.y; lastMouse = { x: e.clientX, y: e.clientY }; } });
         canvas.addEventListener('mouseup', e => { if (!isDragging) handleGameClick(screenToWorld(e.clientX, e.clientY)); });
