@@ -327,19 +327,68 @@
             height = canvas.height = document.documentElement.clientHeight;
         }
 
+        // --- NEW FUNCTION: HIGHLIGHT LEGAL MOVES ---
+        function drawLegalMoves(vStep) {
+            if (!selectedPiece) return;
+
+            // We scan a 30x30 area around the selected piece.
+            // On an infinite board, this is safer than trying to scan everything.
+            const range = 15;
+            const startX = selectedPiece.x - range;
+            const endX = selectedPiece.x + range;
+            const startY = selectedPiece.y - range;
+            const endY = selectedPiece.y + range;
+
+            // Use a translucent green for the highlight
+            ctx.fillStyle = 'rgba(0, 255, 0, 0.25)';
+            ctx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
+            ctx.lineWidth = 2;
+
+            for (let x = startX; x <= endX; x++) {
+                for (let y = startY; y <= endY; y++) {
+                    // Use your existing isValidMove logic!
+                    if (isValidMove(selectedPiece, x, y)) {
+                        // Check if a friendly piece is already blocking (isValidMove doesn't always check color of pieceAtTarget)
+                        const pieceAtPos = board.find(p => p.x === x && p.y === y);
+                        if (pieceAtPos && pieceAtPos.color === selectedPiece.color) continue;
+
+                        // If it's legal, draw a highlighted square
+                        const screenX = width / 2 + camera.x + x * vStep;
+                        const screenY = height / 2 + camera.y + y * vStep;
+
+                        // Draw filled square
+                        ctx.fillRect(screenX + 3, screenY + 3, vStep - 6, vStep - 6);
+                        // Optional: Draw a border for clarity
+                        ctx.strokeRect(screenX + 3, screenY + 3, vStep - 6, vStep - 6);
+                    }
+                }
+            }
+        }
+
+        // --- UPDATED DRAW FUNCTION ---
         function draw() {
             ctx.clearRect(0, 0, width, height);
             const vStep = cellSize * camera.zoom;
+
+            // Grid Rendering
             for (let x = Math.floor((-width / 2 - camera.x) / vStep); x <= Math.ceil((width / 2 - camera.x) / vStep); x++) {
                 for (let y = Math.floor((-height / 2 - camera.y) / vStep); y <= Math.ceil((height / 2 - camera.y) / vStep); y++) {
                     ctx.fillStyle = (x + y) % 2 === 0 ? '#eee' : '#999';
                     ctx.fillRect(width / 2 + camera.x + x * vStep, height / 2 + camera.y + y * vStep, vStep, vStep);
                 }
             }
+
+            // --- NEW: DRAW LEGAL MOVE HIGHLIGHTS ---
+            // This is called AFTER the grid but BEFORE the pieces
+            drawLegalMoves(vStep);
+
+            // Existing Selected Piece Highlight (Red box)
             if (selectedPiece) {
                 ctx.strokeStyle = '#ff0000'; ctx.lineWidth = 3;
                 ctx.strokeRect(width / 2 + camera.x + selectedPiece.x * vStep, height / 2 + camera.y + selectedPiece.y * vStep, vStep, vStep);
             }
+
+            // Existing Piece Rendering
             ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = `${vStep * 0.8}px serif`;
             board.forEach(p => {
                 ctx.fillStyle = 'black';
