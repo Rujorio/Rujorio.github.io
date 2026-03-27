@@ -386,21 +386,43 @@
         async function triggerCardSelection() {
             if (isChoosingCard) return;
             isChoosingCard = true;
+
             try {
                 const snap = await db.ref('powerups').once('value');
                 const pool = [];
-                snap.forEach(c => pool.push({ id: c.key, ...c.val() }));
+                snap.forEach(c => {
+                    pool.push({ id: c.key, ...c.val() });
+                });
 
                 if (pool.length > 0) {
                     const selected = [];
-                    let tempPool = [...pool];
-                    for (let i = 0; i < Math.min(2, pool.length); i++) {
-                        let idx = Math.floor(Math.random() * tempPool.length);
-                        selected.push(tempPool.splice(idx, 1)[0]);
+                    // We pick 2 cards based on weight
+                    for (let i = 0; i < 2; i++) {
+                        const pick = weightedPick(pool, selected);
+                        if (pick) selected.push(pick);
                     }
                     showCardUI(selected);
-                } else { isChoosingCard = false; }
-            } catch (e) { isChoosingCard = false; }
+                } else {
+                    isChoosingCard = false;
+                }
+            } catch (e) {
+                console.error("Card Load Error:", e);
+                isChoosingCard = false;
+            }
+        }
+
+        function weightedPick(items, exclude) {
+            let tempPool = items.filter(item => !exclude.includes(item));
+            if (tempPool.length === 0) return null;
+
+            const totalWeight = tempPool.reduce((sum, item) => sum + (Number(item.weight) || 1), 0);
+            let random = Math.random() * totalWeight;
+
+            for (const item of tempPool) {
+                if (random < item.weight) return item;
+                random -= item.weight;
+            }
+            return tempPool[0];
         }
 
         function showCardUI(cards) {
@@ -408,10 +430,20 @@
             const container = document.getElementById('card-container');
             container.innerHTML = '';
             overlay.style.display = 'flex';
+
             cards.forEach(card => {
                 const div = document.createElement('div');
                 div.className = 'card';
-                div.innerHTML = `<h3>${card.name}</h3><p>${card.desc}</p><small>${card.rarity || 'Common'}</small>`;
+                // Dynamic border color based on rarity
+                const rarityColors = { legendary: 'cyan', epic: '#a335ee', uncommon: '#1eff00' };
+                div.style.borderColor = rarityColors[card.rarity.toLowerCase()] || 'gold';
+
+                div.innerHTML = `
+            <h3>${card.name}</h3>
+            <p>${card.desc}</p>
+            <small style="color:${div.style.borderColor}">${card.rarity.toUpperCase()}</small>
+        `;
+
                 div.onclick = () => {
                     executePowerupLogic(card.id);
                     isChoosingCard = false;
@@ -423,10 +455,24 @@
         }
 
         function executePowerupLogic(id) {
+            const spawnY = (myColor === 'white') ? 7 : 0;
+            const pDir = (myColor === 'white') ? -1 : 1;
+
             switch (id) {
-                case 'p1': spawnExtraPieces('r', myColor, 2); break;
-                case 'p2': spawnExtraPieces('k', myColor, 1); break;
-                case 'p3': spawnExtraPieces('p', myColor, 2, "forward"); break;
+                case 'p1': // King's Castle (2 Rooks)
+                    spawnExtraPieces('r', myColor, 2, "outer");
+                    break;
+                case 'p2': // Second Life (Extra King)
+                    spawnExtraPieces('k', myColor, 1, "outer");
+                    break;
+                case 'p3': // Bigger Army (Full row of Pawns)
+                    // Spawns 8 pawns in a new row
+                    for (let i = 0; i < 8; i++) {
+                        if (!board.find(p => p.x === i && p.y === spawnY + (pDir * 2))) {
+                            board.push({ x: i, y: spawnY + (pDir * 2), type: 'p', color: myColor });
+                        }
+                    }
+                    break;
             }
         }
 
