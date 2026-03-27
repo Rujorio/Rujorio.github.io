@@ -525,27 +525,28 @@
 
             if (p.type === 'p') {
                 const dy = p.color === 'white' ? -1 : 1;
-                // Forward move
-                if (!board.find(bp => bp.x === p.x && bp.y === p.y + dy)) {
+                const startRow = p.color === 'white' ? 6 : 1;
+
+                // 1. Single Square Forward
+                const oneStep = board.find(bp => bp.x === p.x && bp.y === p.y + dy);
+                if (!oneStep) {
                     moves.push({ x: p.x, y: p.y + dy });
+
+                    // 2. Double Square Forward (Only if first step was clear and on start row)
+                    if (p.y === startRow) {
+                        const twoStep = board.find(bp => bp.x === p.x && bp.y === p.y + (dy * 2));
+                        if (!twoStep) {
+                            moves.push({ x: p.x, y: p.y + (dy * 2) });
+                        }
+                    }
                 }
-                // Diagonals (Captures)
+
+                // 3. Diagonals (Captures)
                 const caps = [[-1, dy], [1, dy]];
                 caps.forEach(c => {
                     const target = board.find(bp => bp.x === p.x + c[0] && bp.y === p.y + c[1]);
-                    if (target && target.color !== p.color) moves.push({ x: p.x + c[0], y: p.y + c[1], cap: true });
-                });
-            } else if (dirs[p.type]) {
-                const isSingle = (p.type === 'n' || p.type === 'k');
-                dirs[p.type].forEach(d => {
-                    for (let i = 1; i < (isSingle ? 2 : 20); i++) {
-                        const nx = p.x + d[0] * i, ny = p.y + d[1] * i;
-                        const target = board.find(bp => bp.x === nx && bp.y === ny);
-                        if (target) {
-                            if (target.color !== p.color) moves.push({ x: nx, y: ny, cap: true });
-                            break;
-                        }
-                        moves.push({ x: nx, y: ny });
+                    if (target && target.color !== p.color) {
+                        moves.push({ x: p.x + c[0], y: p.y + c[1], cap: true });
                     }
                 });
             }
