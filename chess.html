@@ -184,12 +184,19 @@
 
             // Helper: Check if a path is clear (for sliding pieces)
             const isPathClear = (stepX, stepY) => {
+                // Safety: If steps are NaN or 0, it's an invalid sliding move
+                if (!isFinite(stepX) || !isFinite(stepY) || (stepX === 0 && stepY === 0)) return false;
+
                 let curX = piece.x + stepX;
                 let curY = piece.y + stepY;
-                while (curX !== targetX || curY !== targetY) {
+
+                // Safety counter to prevent infinite loops (max 100 squares check)
+                let safety = 0;
+                while ((curX !== targetX || curY !== targetY) && safety < 100) {
                     if (board.find(p => p.x === curX && p.y === curY)) return false;
                     curX += stepX;
                     curY += stepY;
+                    safety++;
                 }
                 return true;
             };
@@ -331,34 +338,29 @@
         function drawLegalMoves(vStep) {
             if (!selectedPiece) return;
 
-            // We scan a 30x30 area around the selected piece.
-            // On an infinite board, this is safer than trying to scan everything.
-            const range = 15;
-            const startX = selectedPiece.x - range;
-            const endX = selectedPiece.x + range;
-            const startY = selectedPiece.y - range;
-            const endY = selectedPiece.y + range;
+            // Calculate which grid squares are currently visible on screen
+            const minX = Math.floor((-width / 2 - camera.x) / vStep);
+            const maxX = Math.ceil((width / 2 - camera.x) / vStep);
+            const minY = Math.floor((-height / 2 - camera.y) / vStep);
+            const maxY = Math.ceil((height / 2 - camera.y) / vStep);
 
-            // Use a translucent green for the highlight
             ctx.fillStyle = 'rgba(0, 255, 0, 0.25)';
             ctx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
             ctx.lineWidth = 2;
 
-            for (let x = startX; x <= endX; x++) {
-                for (let y = startY; y <= endY; y++) {
-                    // Use your existing isValidMove logic!
+            for (let x = minX; x <= maxX; x++) {
+                for (let y = minY; y <= maxY; y++) {
+                    // Optimization: Don't check the square the piece is already standing on
+                    if (x === selectedPiece.x && y === selectedPiece.y) continue;
+
                     if (isValidMove(selectedPiece, x, y)) {
-                        // Check if a friendly piece is already blocking (isValidMove doesn't always check color of pieceAtTarget)
                         const pieceAtPos = board.find(p => p.x === x && p.y === y);
                         if (pieceAtPos && pieceAtPos.color === selectedPiece.color) continue;
 
-                        // If it's legal, draw a highlighted square
                         const screenX = width / 2 + camera.x + x * vStep;
                         const screenY = height / 2 + camera.y + y * vStep;
 
-                        // Draw filled square
                         ctx.fillRect(screenX + 3, screenY + 3, vStep - 6, vStep - 6);
-                        // Optional: Draw a border for clarity
                         ctx.strokeRect(screenX + 3, screenY + 3, vStep - 6, vStep - 6);
                     }
                 }
