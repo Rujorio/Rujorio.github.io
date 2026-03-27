@@ -3,51 +3,142 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Infinite Chess - Debug Build</title>
+    <title>Infinite Chess Pro</title>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
     <style>
         body {
             margin: 0;
             overflow: hidden;
-            background: #111;
-            font-family: monospace;
-            position: fixed;
-            width: 100%;
-            height: 100%;
+            background: #000;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: white;
         }
 
         canvas {
             display: block;
             touch-action: none;
+            background: #111;
         }
 
-        #debug-ui {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            color: #0f0;
-            background: rgba(0,0,0,0.8);
+        /* Lobby Styles */
+        #lobby {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.95);
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .lobby-box {
+            background: #222;
+            padding: 30px;
+            border-radius: 12px;
+            border: 1px solid #444;
+            width: 300px;
+            text-align: center;
+        }
+
+        input {
+            width: 90%;
             padding: 10px;
-            border: 1px solid #0f0;
-            pointer-events: none;
+            margin: 10px 0;
+            background: #333;
+            border: 1px solid #555;
+            color: white;
+            border-radius: 4px;
+        }
+
+        button {
+            width: 100%;
+            padding: 10px;
+            background: #007bff;
+            border: none;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            margin-top: 5px;
+        }
+
+            button:hover {
+                background: #0056b3;
+            }
+
+        .room-item {
+            padding: 10px;
+            border-bottom: 1px solid #333;
+            cursor: pointer;
+            text-align: left;
+        }
+
+            .room-item:hover {
+                background: #333;
+            }
+
+        /* UI Overlay */
+        #game-ui {
+            position: fixed;
+            top: 15px;
+            left: 15px;
             z-index: 100;
-            font-size: 12px;
+            pointer-events: none;
+        }
+
+        .stat-card {
+            background: rgba(0,0,0,0.8);
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #333;
+            margin-bottom: 5px;
+        }
+
+        #win-screen {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.9);
+            z-index: 2000;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
         }
     </style>
 </head>
 <body>
 
-    <div id="debug-ui">
-        <div id="d-status">Status: Connecting...</div>
-        <div id="d-turn">Turn: -</div>
-        <div id="d-pos">Last Click: -</div>
+    <div id="lobby">
+        <div class="lobby-box">
+            <h2>Infinite Chess</h2>
+            <input type="text" id="room-name" placeholder="Room Name...">
+            <button onclick="joinRoom(document.getElementById('room-name').value)">Create/Join Room</button>
+            <hr style="margin: 20px 0; border: 0; border-top: 1px solid #444;">
+            <div id="room-list" style="max-height: 200px; overflow-y: auto;">Scanning for rooms...</div>
+        </div>
+    </div>
+
+    <div id="win-screen">
+        <h1 id="winner-text">WHITE WINS!</h1>
+        <button style="width: 200px;" onclick="location.reload()">Back to Lobby</button>
+    </div>
+
+    <div id="game-ui">
+        <div class="stat-card">
+            <div id="ui-room">Room: -</div>
+            <div id="ui-turn" style="font-size: 1.2em; font-weight: bold; color: #00ff00;">Turn: -</div>
+        </div>
+        <div class="stat-card" style="font-size: 0.8em; color: #aaa;">
+            Pinch/Scroll to Zoom<br>Drag to Move
+        </div>
     </div>
 
     <canvas id="gameCanvas"></canvas>
 
     <script>
-        // 1. CONFIG
+        // --- 1. FIREBASE SETUP ---
         const firebaseConfig = {
             apiKey: "AIzaSyCkwCHcME83CIh_D7RbO9kYD0sBPYCcl6Y",
             authDomain: "chess-2-2a1c9.firebaseapp.com",
@@ -56,34 +147,52 @@
         };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
-        const roomRef = db.ref('rooms/stable-infinite-v1');
 
+        // --- 2. GAME VARIABLES ---
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
-        let width, height, cellSize = 60;
-        let camera = { x: 0, y: 0, zoom: 1 };
-        let board = [], turn = 'white', myColor = 'white', selectedPiece = null;
+        let width, height, cellSize = 70;
+        let camera = { x: 0, y: 0, zoom: 0.8 };
+        let board = [], turn = 'white', myColor = 'white', selectedPiece = null, validMoves = [];
+        let roomRef = null;
 
         const PIECES = {
             white: { r: '♖', n: '♘', b: '♗', q: '♕', k: '♔', p: '♙' },
             black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
         };
 
-        // 2. DATABASE SYNC
-        roomRef.on('value', snap => {
-            const data = snap.val();
-            if (!data) {
-                console.log("Initializing fresh board...");
-                initNewGame();
-                return;
-            }
-            board = data.board || [];
-            turn = data.turn || 'white';
-            document.getElementById('d-status').innerText = "Status: Online";
-            document.getElementById('d-turn').innerText = "Turn: " + turn.toUpperCase();
+        // --- 3. LOBBY LOGIC ---
+        db.ref('rooms').on('value', snap => {
+            const list = document.getElementById('room-list');
+            list.innerHTML = '<h4>Active Rooms:</h4>';
+            snap.forEach(child => {
+                const div = document.createElement('div');
+                div.className = 'room-item';
+                div.innerText = child.key;
+                div.onclick = () => joinRoom(child.key);
+                list.appendChild(div);
+            });
         });
 
-        function initNewGame() {
+        function joinRoom(name) {
+            if (!name) return;
+            roomRef = db.ref('rooms/' + name);
+            document.getElementById('lobby').style.display = 'none';
+            document.getElementById('ui-room').innerText = "Room: " + name;
+
+            roomRef.on('value', snap => {
+                const data = snap.val();
+                if (!data) {
+                    initBoard();
+                } else {
+                    board = data.board || [];
+                    turn = data.turn || 'white';
+                    checkWinCondition();
+                }
+            });
+        }
+
+        function initBoard() {
             const b = [];
             const layout = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
             for (let i = 0; i < 8; i++) {
@@ -95,86 +204,154 @@
             roomRef.set({ board: b, turn: 'white' });
         }
 
-        // 3. INPUT (Unified)
-        function handleInput(sx, sy) {
-            const vStep = cellSize * camera.zoom;
-            const wx = Math.floor((sx - (width / 2 + camera.x)) / vStep);
-            const wy = Math.floor((sy - (height / 2 + camera.y)) / vStep);
+        // --- 4. MOVE LOGIC ---
+        function getValidMoves(p) {
+            const moves = [];
+            const isFree = (x, y) => !board.find(bp => bp.x === x && bp.y === y);
+            const getAt = (x, y) => board.find(bp => bp.x === x && bp.y === y);
 
-            document.getElementById('d-pos').innerText = `Last Click: ${wx}, ${wy}`;
-
-            const piece = board.find(p => p.x === wx && p.y === wy);
-
-            if (selectedPiece) {
-                // MOVE (Sandbox style - moves anywhere for stability)
-                if (piece && piece.color === myColor) {
-                    selectedPiece = piece; // Change selection
-                } else {
-                    const newBoard = board.filter(p => !(p.x === wx && p.y === wy)); // Capture
-                    const pIdx = newBoard.findIndex(p => p.x === selectedPiece.x && p.y === selectedPiece.y);
-                    if (pIdx !== -1) {
-                        newBoard[pIdx].x = wx;
-                        newBoard[pIdx].y = wy;
-                        roomRef.update({ board: newBoard, turn: turn === 'white' ? 'black' : 'white' });
+            const addDir = (dx, dy, slide) => {
+                for (let i = 1; i < (slide ? 15 : 2); i++) {
+                    const tx = p.x + dx * i, ty = p.y + dy * i;
+                    const hit = getAt(tx, ty);
+                    if (!hit) moves.push({ x: tx, y: ty, cap: false });
+                    else {
+                        if (hit.color !== p.color) moves.push({ x: tx, y: ty, cap: true });
+                        break;
                     }
-                    selectedPiece = null;
                 }
-            } else if (piece && piece.color === myColor) {
-                selectedPiece = piece;
+            };
+
+            if (p.type === 'p') {
+                const dir = p.color === 'white' ? -1 : 1;
+                if (isFree(p.x, p.y + dir)) moves.push({ x: p.x, y: p.y + dir, cap: false });
+                [1, -1].forEach(dx => {
+                    const target = getAt(p.x + dx, p.y + dir);
+                    if (target && target.color !== p.color) moves.push({ x: p.x + dx, y: p.y + dir, cap: true });
+                });
+            } else if (p.type === 'r') [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(d => addDir(d[0], d[1], true));
+            else if (p.type === 'b') [[1, 1], [1, -1], [-1, 1], [-1, -1]].forEach(d => addDir(d[0], d[1], true));
+            else if (p.type === 'q') [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]].forEach(d => addDir(d[0], d[1], true));
+            else if (p.type === 'k') [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]].forEach(d => addDir(d[0], d[1], false));
+            else if (p.type === 'n') [[2, 1], [2, -1], [-2, 1], [-2, -1], [1, 2], [1, -2], [-1, 2], [-1, -2]].forEach(d => addDir(d[0], d[1], false));
+
+            return moves;
+        }
+
+        function checkWinCondition() {
+            const whiteKings = board.filter(p => p.type === 'k' && p.color === 'white').length;
+            const blackKings = board.filter(p => p.type === 'k' && p.color === 'black').length;
+
+            if (whiteKings === 0 || blackKings === 0) {
+                const winScreen = document.getElementById('win-screen');
+                document.getElementById('winner-text').innerText = whiteKings === 0 ? "BLACK WINS!" : "WHITE WINS!";
+                winScreen.style.display = 'flex';
             }
         }
 
-        // 4. DRAWING
+        // --- 5. RENDER & CONTROLS ---
         function draw() {
             ctx.clearRect(0, 0, width, height);
             const vStep = cellSize * camera.zoom;
             const cx = width / 2 + camera.x, cy = height / 2 + camera.y;
 
-            // Grid
-            ctx.strokeStyle = '#222';
-            ctx.beginPath();
+            // Checkerboard Grid
             const startX = Math.floor(-cx / vStep), endX = Math.ceil((width - cx) / vStep);
             const startY = Math.floor(-cy / vStep), endY = Math.ceil((height - cy) / vStep);
-            for (let x = startX; x <= endX; x++) { ctx.moveTo(cx + x * vStep, 0); ctx.lineTo(cx + x * vStep, height); }
-            for (let y = startY; y <= endY; y++) { ctx.moveTo(0, cy + y * vStep); ctx.lineTo(width, cy + y * vStep); }
-            ctx.stroke();
 
-            // Pieces
+            for (let x = startX; x <= endX; x++) {
+                for (let y = startY; y <= endY; y++) {
+                    ctx.fillStyle = (x + y) % 2 === 0 ? '#1a1a1a' : '#252525';
+                    ctx.fillRect(cx + x * vStep, cy + y * vStep, vStep, vStep);
+                }
+            }
+
+            // Valid Move Highlights
+            validMoves.forEach(m => {
+                ctx.fillStyle = m.cap ? "rgba(255, 0, 0, 0.4)" : "rgba(0, 255, 0, 0.3)";
+                ctx.beginPath();
+                ctx.arc(cx + (m.x + 0.5) * vStep, cy + (m.y + 0.5) * vStep, vStep * 0.2, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            // Formal Pieces
             ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-            ctx.font = `${vStep * 0.8}px serif`;
+            ctx.font = `${vStep * 0.8}px 'Times New Roman', serif`;
             board.forEach(p => {
-                ctx.fillStyle = p.color === 'white' ? 'white' : '#ff4444';
+                ctx.fillStyle = p.color === 'white' ? '#fff' : '#ff4747';
                 ctx.fillText(PIECES[p.color][p.type], cx + (p.x + 0.5) * vStep, cy + (p.y + 0.5) * vStep);
             });
 
             if (selectedPiece) {
-                ctx.strokeStyle = 'cyan'; ctx.lineWidth = 2;
+                ctx.strokeStyle = '#007bff'; ctx.lineWidth = 3;
                 ctx.strokeRect(cx + selectedPiece.x * vStep, cy + selectedPiece.y * vStep, vStep, vStep);
             }
+
+            document.getElementById('ui-turn').innerText = "Turn: " + turn.toUpperCase();
+            document.getElementById('ui-turn').style.color = turn === 'white' ? '#fff' : '#ff4747';
 
             requestAnimationFrame(draw);
         }
 
-        // 5. EVENTS
-        let isDragging = false, lastT = { x: 0, y: 0 };
-        window.addEventListener('mousedown', e => { isDragging = false; lastT = { x: e.clientX, y: e.clientY }; });
+        // Interaction Logic
+        function handleAction(sx, sy) {
+            if (!roomRef) return;
+            const vStep = cellSize * camera.zoom;
+            const wx = Math.floor((sx - (width / 2 + camera.x)) / vStep);
+            const wy = Math.floor((sy - (height / 2 + camera.y)) / vStep);
+
+            const move = validMoves.find(m => m.x === wx && m.y === wy);
+
+            if (move && turn === myColor) {
+                let nb = board.filter(p => !(p.x === wx && p.y === wy));
+                const pIdx = nb.findIndex(p => p.x === selectedPiece.x && p.y === selectedPiece.y);
+                nb[pIdx].x = wx; nb[pIdx].y = wy;
+                roomRef.update({ board: nb, turn: turn === 'white' ? 'black' : 'white' });
+                selectedPiece = null; validMoves = [];
+            } else {
+                const p = board.find(bp => bp.x === wx && bp.y === wy);
+                if (p && p.color === myColor) {
+                    selectedPiece = p;
+                    validMoves = getValidMoves(p);
+                } else {
+                    selectedPiece = null; validMoves = [];
+                }
+            }
+        }
+
+        // Camera & Zoom
+        let isDrag = false, lastT = { x: 0, y: 0 }, pDist = 0;
+        window.addEventListener('mousedown', e => { isDrag = false; lastT = { x: e.clientX, y: e.clientY }; });
         window.addEventListener('mousemove', e => {
             if (e.buttons === 1) {
-                isDragging = true;
+                isDrag = true;
                 camera.x += e.clientX - lastT.x; camera.y += e.clientY - lastT.y;
                 lastT = { x: e.clientX, y: e.clientY };
             }
         });
-        window.addEventListener('mouseup', e => { if (!isDragging) handleInput(e.clientX, e.clientY); });
+        window.addEventListener('mouseup', e => { if (!isDrag) handleAction(e.clientX, e.clientY); });
+        window.addEventListener('wheel', e => {
+            const delta = e.deltaY > 0 ? 0.9 : 1.1;
+            camera.zoom = Math.max(0.2, Math.min(camera.zoom * delta, 3));
+        });
 
-        // Touch Support
-        window.addEventListener('touchstart', e => { isDragging = false; lastT = { x: e.touches[0].clientX, y: e.touches[0].clientY }; });
+        // Touch Zoom (Pinch)
+        window.addEventListener('touchstart', e => {
+            if (e.touches.length === 2) pDist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+            isDrag = false; lastT = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        });
         window.addEventListener('touchmove', e => {
-            isDragging = true;
-            camera.x += e.touches[0].clientX - lastT.x; camera.y += e.touches[0].clientY - lastT.y;
-            lastT = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            if (e.touches.length === 2) {
+                const d = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
+                camera.zoom = Math.max(0.2, Math.min(camera.zoom * (d / pDist), 3));
+                pDist = d;
+            } else {
+                isDrag = true;
+                camera.x += e.touches[0].clientX - lastT.x; camera.y += e.touches[0].clientY - lastT.y;
+                lastT = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+            }
         }, { passive: false });
-        window.addEventListener('touchend', e => { if (!isDragging) handleInput(e.changedTouches[0].clientX, e.changedTouches[0].clientY); });
+        window.addEventListener('touchend', e => { if (!isDrag && e.touches.length === 0) handleAction(e.changedTouches[0].clientX, e.changedTouches[0].clientY); });
 
         window.addEventListener('resize', () => { width = canvas.width = window.innerWidth; height = canvas.height = window.innerHeight; });
         window.dispatchEvent(new Event('resize'));
