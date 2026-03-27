@@ -178,7 +178,7 @@
 
         let moveCount = 0;
         let isChoosingCard = false;
-        let availableCards = []; // The two cards offered to the player
+        let availableCards = [];
 
         let myColor = 'white';
         let selectedPiece = null, turn = 'white', board = [];
@@ -195,11 +195,10 @@
             const absDx = Math.abs(dx), absDy = Math.abs(dy);
 
             const isPathClear = (stepX, stepY) => {
-                if (!isFinite(stepX) || !isFinite(stepY) || (stepX === 0 && stepY === 0)) return false;
-                let curX = piece.x + stepX, curY = piece.y + stepY, s = 0;
-                while ((curX !== targetX || curY !== targetY) && s < 100) {
+                let curX = piece.x + stepX, curY = piece.y + stepY;
+                while (curX !== targetX || curY !== targetY) {
                     if (board.find(p => p.x === curX && p.y === curY)) return false;
-                    curX += stepX; curY += stepY; s++;
+                    curX += stepX; curY += stepY;
                 }
                 return true;
             };
@@ -220,7 +219,6 @@
                 case 'k': return absDx <= 1 && absDy <= 1;
             }
             return false;
-            }
         }
 
         function checkWinCondition() {
@@ -234,8 +232,8 @@
         }
 
         function resetGame() {
-            gameOver = false; winner = null; initBoard();
-            if (roomRef) roomRef.update({ board, turn: 'white', status: 'PLAYING', winner: null });
+            gameOver = false; winner = null; moveCount = 0; initBoard();
+            if (roomRef) roomRef.update({ board, turn: 'white', status: 'PLAYING', winner: null, moveCount: 0 });
         }
 
         // 4. CORE LOGIC
@@ -260,7 +258,8 @@
 
         function handleGameClick(worldPos) {
             if (gameOver) { resetGame(); return; }
-            if (turn !== myColor) return;
+            if (turn !== myColor || isChoosingCard) return;
+
             const pieceAtPos = board.find(p => p.x === worldPos.x && p.y === worldPos.y);
 
             if (selectedPiece) {
@@ -275,38 +274,35 @@
                     checkWinCondition();
                     selectedPiece = null;
                     turn = (turn === 'white' ? 'black' : 'white');
-
-                    // --- ADD THIS PART HERE ---
                     moveCount++;
+
                     if (roomRef) {
-                        roomRef.update({
-                            board,
-                            turn,
-                            moveCount: moveCount // This triggers the syncState on both screens
-                        });
+                        roomRef.update({ board, turn, moveCount: moveCount });
                     }
                     updateTurnDisplay();
+                } else {
+                    selectedPiece = null;
                 }
+            } else if (pieceAtPos && pieceAtPos.color === myColor) {
+                selectedPiece = pieceAtPos;
+            }
         }
 
         function spawnExtraPieces(type, color, count, direction = "outer") {
             const myPieces = board.filter(p => p.color === color && p.type === type);
-            const pDir = (color === 'white') ? -1 : 1; // White moves -1, Black moves +1
+            const pDir = (color === 'white') ? -1 : 1;
 
             if (direction === "forward") {
-                // We can use 'count' to decide how many rows to spawn (e.g., 1 or 2)
                 for (let i = 1; i <= count; i++) {
                     myPieces.forEach(pawn => {
-                        let targetY = pawn.y + (pDir * i); // Offset increases with each row
+                        let targetY = pawn.y + (pDir * i);
                         let targetX = pawn.x;
-
                         if (!board.find(p => p.x === targetX && p.y === targetY)) {
                             board.push({ x: targetX, y: targetY, type: type, color: color });
                         }
                     });
                 }
             } else {
-                // OUTER LOGIC (Rooks/Kings) - Your original code
                 myPieces.sort((a, b) => a.x - b.x);
                 let leftX = myPieces.length > 0 ? myPieces[0].x - 1 : -1;
                 let rightX = myPieces.length > 0 ? myPieces[myPieces.length - 1].x + 1 : 8;
@@ -315,12 +311,10 @@
                 for (let i = 0; i < count; i++) {
                     let targetX = (i % 2 === 0) ? leftX : rightX;
                     while (board.find(p => p.x === targetX && p.y === spawnY)) {
-                        if (i % 2 === 0) targetX--;
-                        else targetX++;
+                        if (i % 2 === 0) targetX--; else targetX++;
                     }
                     board.push({ x: targetX, y: spawnY, type: type, color: color });
-                    if (i % 2 === 0) leftX = targetX - 1;
-                    else rightX = targetX + 1;
+                    if (i % 2 === 0) leftX = targetX - 1; else rightX = targetX + 1;
                 }
             }
         }
@@ -350,7 +344,7 @@
         function initAsHost(id) {
             currentRoomId = id; roomRef = db.ref('rooms/' + id);
             myColor = 'white';
-            roomRef.set({ board, turn: 'white', hostColor: 'white', guestColor: 'black', guestJoined: false });
+            roomRef.set({ board, turn: 'white', hostColor: 'white', guestColor: 'black', guestJoined: false, moveCount: 0 });
             roomRef.onDisconnect().remove();
             roomRef.on('value', syncState);
         }
@@ -372,19 +366,22 @@
         function syncState(snap) {
             const d = snap.val();
             if (!d) return;
-            board = d.board || []; turn = d.turn || 'white';
+            board = d.board || [];
+            turn = d.turn || 'white';
             gameOver = d.status === 'GAMEOVER';
             winner = d.winner || null;
-            myColor = (currentRoomId === myRoomId) ? d.hostColor : d.guestColor;
-            updateTurnDisplay();
-            statusDisplay.innerText = `Online | You: ${myColor.toUpperCase()}`;
-            if (d.moveCount !== undefined) {
-                // If moveCount just hit a multiple of 6 (and increased)
-                if (d.moveCount > 0 && d.moveCount % 6 === 0 && d.moveCount !== moveCount) {
-                    triggerCardSelection();
+
+            // Check if a card selection should trigger for the CURRENT player
+            if (d.moveCount !== undefined && d.moveCount !== moveCount) {
+                if (d.moveCount > 0 && d.moveCount % 6 === 0) {
+                    // Only show UI to the player whose turn it just became
+                    if (turn === myColor) triggerCardSelection();
                 }
                 moveCount = d.moveCount;
             }
+
+            updateTurnDisplay();
+            statusDisplay.innerText = `Online | You: ${myColor.toUpperCase()}`;
         }
 
         function updateTurnDisplay() {
@@ -396,18 +393,25 @@
         // 6. POWERUPS
         async function triggerCardSelection() {
             if (isChoosingCard) return;
-
-            const snapshot = await db.ref('powerups').once('value');
-            const allPowerups = [];
-            snapshot.forEach(child => {
-                allPowerups.push({ id: child.key, ...child.val() });
-            });
-
-            // Use the weighted math instead of simple random
-            availableCards = getWeightedRandomCards(allPowerups, 2);
-
             isChoosingCard = true;
-            showCardUI();
+
+            try {
+                const snapshot = await db.ref('powerups').once('value');
+                const allPowerups = [];
+                snapshot.forEach(child => {
+                    allPowerups.push({ id: child.key, ...child.val() });
+                });
+
+                if (allPowerups.length > 0) {
+                    availableCards = getWeightedRandomCards(allPowerups, 2);
+                    showCardUI();
+                } else {
+                    isChoosingCard = false;
+                }
+            } catch (e) {
+                isChoosingCard = false;
+                console.error("Powerup fetch failed", e);
+            }
         }
 
         function showCardUI() {
@@ -418,45 +422,34 @@
 
             availableCards.forEach(card => {
                 const cardEl = document.createElement('div');
-                cardEl.className = 'card'; // Add CSS for rarity colors!
+                cardEl.className = 'card';
                 cardEl.innerHTML = `
-                <h3>${card.name}</h3>
-                <p>${card.desc}</p>
-                <small>${card.rarity.toUpperCase()}</small>
-            `;
+            <h3>${card.name}</h3>
+            <p>${card.desc}</p>
+            <small>${card.rarity.toUpperCase()}</small>
+        `;
                 cardEl.onclick = () => applyPowerup(card);
                 container.appendChild(cardEl);
             });
         }
 
         function applyPowerup(card) {
-            console.log("Player chose:", card.name);
-
-            // This is where the magic happens:
             executePowerupLogic(card.id);
-
             isChoosingCard = false;
             document.getElementById('card-overlay').style.display = 'none';
-
             statusDisplay.innerText = `Activated: ${card.name}!`;
         }
 
         function getWeightedRandomCards(allCards, count) {
             let selected = [];
             let tempPool = [...allCards];
-
             for (let i = 0; i < count; i++) {
-                // 1. Calculate total weight of remaining cards
                 let totalWeight = tempPool.reduce((sum, card) => sum + (card.weight || 10), 0);
-
-                // 2. Pick a random threshold
                 let random = Math.random() * totalWeight;
                 let cursor = 0;
-
                 for (let j = 0; j < tempPool.length; j++) {
                     cursor += (tempPool[j].weight || 10);
                     if (random <= cursor) {
-                        // 3. Select this card and remove from temp pool so it's not picked twice
                         selected.push(tempPool[j]);
                         tempPool.splice(j, 1);
                         break;
@@ -467,30 +460,13 @@
         }
 
         function executePowerupLogic(cardId) {
-            // We use myColor because only the person who picked the card gets the pieces
             const player = myColor;
-
             switch (cardId) {
-                case 'p1':
-                    // This will spawn 2 Rooks on the outer edges
-                    spawnExtraPieces('r', player, 2, "outer");
-                    break;
-
-                case 'p2':
-                    // This will spawn 1 extra King on the outer edge
-                    spawnExtraPieces('k', player, 1, "outer");
-                    break;
-
-                case 'p3':
-                // This will add another row of pawns in front of the existing ones
-                    spawnExtraPieces('p', player, 1, "forward");
-                    break;
+                case 'p1': spawnExtraPieces('r', player, 2, "outer"); break;
+                case 'p2': spawnExtraPieces('k', player, 1, "outer"); break;
+                case 'p3': spawnExtraPieces('p', player, 1, "forward"); break;
             }
-
-            // Force sync the board to Firebase so the opponent sees the new Rooks
-            if (roomRef) {
-                roomRef.update({ board: board });
-            }
+            if (roomRef) roomRef.update({ board: board });
         }
 
         // 7. DRAWING
@@ -556,7 +532,7 @@
             }
         }, { passive: false });
 
-        canvas.addEventListener('touchend', e => { if (e.touches.length === 0 && !isDragging) handleGameClick(screenToWorld(touchStartPos.x, touchStartPos.y)); });
+        canvas.addEventListener('touchend', e => { if (e.touches.length === 0 && !isDragging) handleGameClick(screenToWorld(touchStartPos.x, touchStartPos.y)); initialPinchDist = null; });
         window.addEventListener('resize', resize);
         canvas.addEventListener('wheel', e => camera.zoom = Math.max(0.1, Math.min(camera.zoom * (e.deltaY > 0 ? 0.9 : 1.1), 5)));
 
