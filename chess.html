@@ -313,6 +313,14 @@
             if (!name) return;
             if (roomRef) roomRef.off();
 
+            playersRef.once('value', snap => {
+                const count = snap.numChildren();
+                if (count === 0) {
+                    myColor = 'white';
+                    initBoard(name);
+                    // NEW: If the creator leaves, the whole room vanishes
+                    roomRef.onDisconnect().remove();
+                }
             roomRef = db.ref('rooms/' + name);
             const playersRef = roomRef.child('players');
             const myPlayerRef = playersRef.push();
