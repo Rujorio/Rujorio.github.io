@@ -463,26 +463,52 @@
 
         // Interaction Logic
         function handleAction(sx, sy) {
-            if (!roomRef) return;
+            if (!roomRef || myColor === 'spectator') return;
+
             const vStep = cellSize * camera.zoom;
             const wx = Math.floor((sx - (width / 2 + camera.x)) / vStep);
             const wy = Math.floor((sy - (height / 2 + camera.y)) / vStep);
 
+            // Check if we are clicking a move that was already validated
             const move = validMoves.find(m => m.x === wx && m.y === wy);
 
             if (move && turn === myColor) {
+                // 1. Create the new board: Remove any piece at the target, then move our piece
                 let nb = board.filter(p => !(p.x === wx && p.y === wy));
                 const pIdx = nb.findIndex(p => p.x === selectedPiece.x && p.y === selectedPiece.y);
-                nb[pIdx].x = wx; nb[pIdx].y = wy;
-                roomRef.update({ board: nb, turn: turn === 'white' ? 'black' : 'white' });
-                selectedPiece = null; validMoves = [];
+
+                if (pIdx !== -1) {
+                    nb[pIdx].x = wx;
+                    nb[pIdx].y = wy;
+
+                    // 2. Prepare the update with Move History (for the 3-round powerup trigger)
+                    const moveKey = Date.now();
+                    const updateData = {
+                        board: nb,
+                        turn: turn === 'white' ? 'black' : 'white',
+                        [`moveHistory/${moveKey}`]: {
+                            from: { x: selectedPiece.x, y: selectedPiece.y },
+                            to: { x: wx, y: wy },
+                            player: myColor
+                        }
+                    };
+
+                    // 3. Push to Firebase
+                    roomRef.update(updateData);
+
+                    // 4. Reset local selection
+                    selectedPiece = null;
+                    validMoves = [];
+                }
             } else {
+                // Picking a piece to move
                 const p = board.find(bp => bp.x === wx && bp.y === wy);
-                if (p && p.color === myColor) {
+                if (p && p.color === myColor && turn === myColor) {
                     selectedPiece = p;
                     validMoves = getValidMoves(p);
                 } else {
-                    selectedPiece = null; validMoves = [];
+                    selectedPiece = null;
+                    validMoves = [];
                 }
             }
         }
