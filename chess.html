@@ -165,26 +165,62 @@
         db.ref('rooms').on('value', snap => {
             const list = document.getElementById('room-list');
             list.innerHTML = '<h4>Active Rooms:</h4>';
+
+            let hasRooms = false;
             snap.forEach(child => {
-                const div = document.createElement('div');
-                div.className = 'room-item';
-                div.innerText = child.key;
-                div.onclick = () => joinRoom(child.key);
-                list.appendChild(div);
+                const data = child.val();
+                // Only show room if it has active players
+                if (data.players) {
+                    hasRooms = true;
+                    const div = document.createElement('div');
+                    div.className = 'room-item';
+                    const playerCount = Object.keys(data.players).length;
+                    div.innerText = `${child.key} (${playerCount}/2 Players)`;
+                    div.onclick = () => joinRoom(child.key);
+                    list.appendChild(div);
+                }
             });
+
+            if (!hasRooms) list.innerHTML += '<div style="color:#666">No active games. Create one!</div>';
         });
 
         function joinRoom(name) {
             if (!name) return;
-            roomRef = db.ref('rooms/' + name);
-            document.getElementById('lobby').style.display = 'none';
-            document.getElementById('ui-room').innerText = "Room: " + name;
 
+            // Cleanup previous room if switching
+            if (roomRef) roomRef.off();
+
+            roomRef = db.ref('rooms/' + name);
+            const playersRef = roomRef.child('players');
+
+            // AUTO-DELETE: When I leave, remove my player entry.
+            // If I'm the last one, Firebase deletes the 'players' and 'room' node automatically.
+            const myPlayerRef = playersRef.push();
+            myPlayerRef.onDisconnect().remove();
+
+            playersRef.once('value', snap => {
+                const count = snap.numChildren();
+                if (count === 0) {
+                    myColor = 'white';
+                    // First player resets the board
+                    initBoard(name);
+                } else if (count === 1) {
+                    myColor = 'black';
+                } else {
+                    myColor = 'spectator';
+                }
+
+                myPlayerRef.set({ color: myColor });
+                document.getElementById('lobby').style.display = 'none';
+                document.getElementById('ui-room').innerText = "Room: " + name;
+                setupGameSync();
+            });
+        }
+
+        function setupGameSync() {
             roomRef.on('value', snap => {
                 const data = snap.val();
-                if (!data) {
-                    initBoard();
-                } else {
+                if (data) {
                     board = data.board || [];
                     turn = data.turn || 'white';
                     checkWinCondition();
@@ -192,7 +228,7 @@
             });
         }
 
-        function initBoard() {
+        function initBoard(name) {
             const b = [];
             const layout = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
             for (let i = 0; i < 8; i++) {
@@ -201,7 +237,8 @@
                 b.push({ x: i, y: 0, type: layout[i], color: 'black' });
                 b.push({ x: i, y: 1, type: 'p', color: 'black' });
             }
-            roomRef.set({ board: b, turn: 'white' });
+            // Set the initial state
+            roomRef.update({ board: b, turn: 'white' });
         }
 
         // --- 4. MOVE LOGIC ---
