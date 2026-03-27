@@ -228,6 +228,48 @@
         }
 
         // 5. NETWORKING
+
+        function initMultiplayer() {
+            if (!db) {
+                statusDisplay.innerText = "Offline: Firebase Blocked";
+                return;
+            }
+
+            // 1. Create your own room so others can see YOU
+            initAsHost(myRoomId);
+
+            // 2. Listen for OTHER rooms so you can see THEM
+            db.ref('rooms').on('value', (snapshot) => {
+                roomsContainer.innerHTML = ""; // Clear list
+                let availableRooms = 0;
+
+                snapshot.forEach((child) => {
+                    const data = child.val();
+
+                    // CRITICAL: Only show rooms that:
+                    // - Are NOT your own room
+                    // - Do NOT have a guest yet (not full)
+                    if (child.key !== currentRoomId && data && !data.guestJoined) {
+                        availableRooms++;
+                        const btn = document.createElement('button');
+                        btn.className = 'lobby-item';
+                        btn.innerHTML = `<span>⚡ Join ${data.hostName || 'Player'}</span>`;
+
+                        btn.onclick = () => {
+                            console.log("Attempting to join:", child.key);
+                            joinOtherRoom(child.key);
+                        };
+
+                        roomsContainer.appendChild(btn);
+                    }
+                });
+
+                if (availableRooms === 0) {
+                    roomsContainer.innerHTML = "<div style='color:#666; font-size:0.8em;'>Waiting for players...</div>";
+                }
+            });
+        }
+
         function initAsHost(id) {
             if (!db) return;
             currentRoomId = id; roomRef = db.ref('rooms/' + id);
@@ -238,15 +280,26 @@
         }
 
         function joinOtherRoom(targetId) {
-            if (!db) return;
-            db.ref('rooms/' + targetId).once('value').then(snap => {
+            // Stop hosting your own room to save resources
+            if (roomRef) roomRef.off();
+            db.ref('rooms/' + myRoomId).remove();
+
+            currentRoomId = targetId;
+            roomRef = db.ref('rooms/' + targetId);
+
+            roomRef.once('value').then(snap => {
                 const d = snap.val();
-                if (d && !d.guestJoined) {
-                    const hostWhite = Math.random() > 0.5;
-                    myColor = hostWhite ? 'black' : 'white';
-                    roomRef = db.ref('rooms/' + targetId);
-                    roomRef.update({ guestJoined: true, hostColor: hostWhite ? 'white' : 'black', guestColor: hostWhite ? 'black' : 'white' });
+                if (d) {
+                    // Assign color based on what the host ISN'T
+                    myColor = (d.hostColor === 'white') ? 'black' : 'white';
+
+                    roomRef.update({
+                        guestJoined: true,
+                        guestColor: myColor
+                    });
+
                     roomRef.on('value', syncState);
+                    statusDisplay.innerText = `Connected! Role: ${myColor}`;
                 }
             });
         }
@@ -328,7 +381,7 @@
         canvas.addEventListener('wheel', e => camera.zoom = Math.max(0.1, Math.min(camera.zoom * (e.deltaY > 0 ? 0.9 : 1.1), 5)));
 
         // START
-        resize(); initBoard(); draw();
+        resize(); initBoard(); draw(); initMultiplayer();
         if (db) initAsHost(myRoomId); else statusDisplay.innerText = "Offline Mode";
     </script>
 </body>
