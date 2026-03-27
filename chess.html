@@ -3,15 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Infinite Chess - Move Highlights</title>
+    <title>Infinite Chess - Debug Build</title>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
     <style>
         body {
             margin: 0;
             overflow: hidden;
-            background: #1a1a1a;
-            font-family: sans-serif;
+            background: #111;
+            font-family: monospace;
             position: fixed;
             width: 100%;
             height: 100%;
@@ -19,42 +19,35 @@
 
         canvas {
             display: block;
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100vw;
-            height: 100vh;
-            z-index: 1;
             touch-action: none;
         }
 
-        #ui {
+        #debug-ui {
             position: absolute;
             top: 10px;
             left: 10px;
-            color: white;
-            background: rgba(0,0,0,0.85);
-            padding: 15px;
-            border-radius: 8px;
-            z-index: 100;
+            color: #0f0;
+            background: rgba(0,0,0,0.8);
+            padding: 10px;
+            border: 1px solid #0f0;
             pointer-events: none;
-        }
-
-        #turn {
-            font-weight: bold;
+            z-index: 100;
+            font-size: 12px;
         }
     </style>
 </head>
 <body>
 
-    <div id="ui">
-        <div id="turn">Turn: White</div>
-        <div style="font-size: 0.8em; color: #aaa; margin-top: 5px;">Tap a piece to see moves</div>
+    <div id="debug-ui">
+        <div id="d-status">Status: Connecting...</div>
+        <div id="d-turn">Turn: -</div>
+        <div id="d-pos">Last Click: -</div>
     </div>
 
     <canvas id="gameCanvas"></canvas>
 
     <script>
+        // 1. CONFIG
         const firebaseConfig = {
             apiKey: "AIzaSyCkwCHcME83CIh_D7RbO9kYD0sBPYCcl6Y",
             authDomain: "chess-2-2a1c9.firebaseapp.com",
@@ -63,137 +56,91 @@
         };
         firebase.initializeApp(firebaseConfig);
         const db = firebase.database();
-        const roomRef = db.ref('rooms/global-plain-chess');
+        const roomRef = db.ref('rooms/stable-infinite-v1');
 
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         let width, height, cellSize = 60;
         let camera = { x: 0, y: 0, zoom: 1 };
-        let board = [], turn = 'white', myColor = 'white', selectedPiece = null, validMoves = [];
+        let board = [], turn = 'white', myColor = 'white', selectedPiece = null;
 
         const PIECES = {
             white: { r: '♖', n: '♘', b: '♗', q: '♕', k: '♔', p: '♙' },
             black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
         };
 
-        // --- MOVE LOGIC ---
-        function getValidMoves(piece) {
-            const moves = [];
-            const directions = {
-                r: [[1, 0], [-1, 0], [0, 1], [0, -1]],
-                b: [[1, 1], [1, -1], [-1, 1], [-1, -1]],
-                q: [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]],
-                k: [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]],
-                n: [[2, 1], [2, -1], [-2, 1], [-2, -1], [1, 2], [1, -2], [-1, 2], [-1, -2]]
-            };
-
-            if (piece.type === 'p') {
-                const dir = piece.color === 'white' ? -1 : 1;
-                // Forward
-                if (!board.find(p => p.x === piece.x && p.y === piece.y + dir)) {
-                    moves.push({ x: piece.x, y: piece.y + dir });
-                    // Double jump from start
-                    if (piece.y === (piece.color === 'white' ? 6 : 1) && !board.find(p => p.x === piece.x && p.y === piece.y + dir * 2)) {
-                        moves.push({ x: piece.x, y: piece.y + dir * 2 });
-                    }
-                }
-                // Captures
-                [1, -1].forEach(dx => {
-                    const target = board.find(p => p.x === piece.x + dx && p.y === piece.y + dir);
-                    if (target && target.color !== piece.color) moves.push({ x: piece.x + dx, y: piece.y + dir });
-                });
-            } else if (['r', 'b', 'q'].includes(piece.type)) {
-                directions[piece.type].forEach(d => {
-                    for (let i = 1; i < 20; i++) { // Limits "infinite" slide to 20 for performance
-                        const tx = piece.x + d[0] * i, ty = piece.y + d[1] * i;
-                        const hit = board.find(p => p.x === tx && p.y === ty);
-                        if (!hit) moves.push({ x: tx, y: ty });
-                        else {
-                            if (hit.color !== piece.color) moves.push({ x: tx, y: ty });
-                            break;
-                        }
-                    }
-                });
-            } else { // Knight and King
-                directions[piece.type].forEach(d => {
-                    const tx = piece.x + d[0], ty = piece.y + d[1];
-                    const hit = board.find(p => p.x === tx && p.y === ty);
-                    if (!hit || hit.color !== piece.color) moves.push({ x: tx, y: ty });
-                });
-            }
-            return moves;
-        }
-
-        // --- INPUT HANDLING ---
-        function handleInput(screenX, screenY) {
-            if (turn !== myColor) return;
-            const vStep = cellSize * camera.zoom;
-            const wx = Math.floor((screenX - (width / 2 + camera.x)) / vStep);
-            const wy = Math.floor((screenY - (height / 2 + camera.y)) / vStep);
-
-            const clickedMove = validMoves.find(m => m.x === wx && m.y === wy);
-
-            if (clickedMove) {
-                // Execute Move
-                let newBoard = board.filter(p => !(p.x === wx && p.y === wy));
-                const pIdx = newBoard.findIndex(p => p.x === selectedPiece.x && p.y === selectedPiece.y);
-                newBoard[pIdx].x = wx;
-                newBoard[pIdx].y = wy;
-
-                roomRef.update({ board: newBoard, turn: turn === 'white' ? 'black' : 'white' });
-                selectedPiece = null;
-                validMoves = [];
-            } else {
-                const piece = board.find(p => p.x === wx && p.y === wy);
-                if (piece && piece.color === myColor) {
-                    selectedPiece = piece;
-                    validMoves = getValidMoves(piece);
-                } else {
-                    selectedPiece = null;
-                    validMoves = [];
-                }
-            }
-        }
-
-        // --- FIREBASE SYNC ---
+        // 2. DATABASE SYNC
         roomRef.on('value', snap => {
             const data = snap.val();
-            if (data) {
-                board = data.board;
-                turn = data.turn;
-                document.getElementById('turn').innerText = `Turn: ${turn.toUpperCase()}`;
+            if (!data) {
+                console.log("Initializing fresh board...");
+                initNewGame();
+                return;
             }
+            board = data.board || [];
+            turn = data.turn || 'white';
+            document.getElementById('d-status').innerText = "Status: Online";
+            document.getElementById('d-turn').innerText = "Turn: " + turn.toUpperCase();
         });
 
-        // --- RENDER ---
+        function initNewGame() {
+            const b = [];
+            const layout = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
+            for (let i = 0; i < 8; i++) {
+                b.push({ x: i, y: 7, type: layout[i], color: 'white' });
+                b.push({ x: i, y: 6, type: 'p', color: 'white' });
+                b.push({ x: i, y: 0, type: layout[i], color: 'black' });
+                b.push({ x: i, y: 1, type: 'p', color: 'black' });
+            }
+            roomRef.set({ board: b, turn: 'white' });
+        }
+
+        // 3. INPUT (Unified)
+        function handleInput(sx, sy) {
+            const vStep = cellSize * camera.zoom;
+            const wx = Math.floor((sx - (width / 2 + camera.x)) / vStep);
+            const wy = Math.floor((sy - (height / 2 + camera.y)) / vStep);
+
+            document.getElementById('d-pos').innerText = `Last Click: ${wx}, ${wy}`;
+
+            const piece = board.find(p => p.x === wx && p.y === wy);
+
+            if (selectedPiece) {
+                // MOVE (Sandbox style - moves anywhere for stability)
+                if (piece && piece.color === myColor) {
+                    selectedPiece = piece; // Change selection
+                } else {
+                    const newBoard = board.filter(p => !(p.x === wx && p.y === wy)); // Capture
+                    const pIdx = newBoard.findIndex(p => p.x === selectedPiece.x && p.y === selectedPiece.y);
+                    if (pIdx !== -1) {
+                        newBoard[pIdx].x = wx;
+                        newBoard[pIdx].y = wy;
+                        roomRef.update({ board: newBoard, turn: turn === 'white' ? 'black' : 'white' });
+                    }
+                    selectedPiece = null;
+                }
+            } else if (piece && piece.color === myColor) {
+                selectedPiece = piece;
+            }
+        }
+
+        // 4. DRAWING
         function draw() {
             ctx.clearRect(0, 0, width, height);
             const vStep = cellSize * camera.zoom;
             const cx = width / 2 + camera.x, cy = height / 2 + camera.y;
 
-            // Simple Infinite Grid
+            // Grid
             ctx.strokeStyle = '#222';
             ctx.beginPath();
-            for (let x = Math.floor(-cx / vStep); x <= Math.ceil((width - cx) / vStep); x++) {
-                ctx.moveTo(cx + x * vStep, 0); ctx.lineTo(cx + x * vStep, height);
-            }
-            for (let y = Math.floor(-cy / vStep); y <= Math.ceil((height - cy) / vStep); y++) {
-                ctx.moveTo(0, cy + y * vStep); ctx.lineTo(width, cy + y * vStep);
-            }
+            const startX = Math.floor(-cx / vStep), endX = Math.ceil((width - cx) / vStep);
+            const startY = Math.floor(-cy / vStep), endY = Math.ceil((height - cy) / vStep);
+            for (let x = startX; x <= endX; x++) { ctx.moveTo(cx + x * vStep, 0); ctx.lineTo(cx + x * vStep, height); }
+            for (let y = startY; y <= endY; y++) { ctx.moveTo(0, cy + y * vStep); ctx.lineTo(width, cy + y * vStep); }
             ctx.stroke();
 
-            // Draw Valid Moves
-            validMoves.forEach(m => {
-                const isCapture = board.find(p => p.x === m.x && p.y === m.y);
-                ctx.fillStyle = isCapture ? "rgba(255, 0, 0, 0.3)" : "rgba(0, 255, 0, 0.2)";
-                ctx.beginPath();
-                ctx.arc(cx + (m.x + 0.5) * vStep, cy + (m.y + 0.5) * vStep, vStep * 0.2, 0, Math.PI * 2);
-                ctx.fill();
-            });
-
-            // Draw Pieces
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
+            // Pieces
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
             ctx.font = `${vStep * 0.8}px serif`;
             board.forEach(p => {
                 ctx.fillStyle = p.color === 'white' ? 'white' : '#ff4444';
@@ -201,23 +148,33 @@
             });
 
             if (selectedPiece) {
-                ctx.strokeStyle = 'gold'; ctx.lineWidth = 2;
+                ctx.strokeStyle = 'cyan'; ctx.lineWidth = 2;
                 ctx.strokeRect(cx + selectedPiece.x * vStep, cy + selectedPiece.y * vStep, vStep, vStep);
             }
 
             requestAnimationFrame(draw);
         }
 
-        // --- BOILERPLATE CONTROLS ---
-        let isDragging = false, lastTouch = { x: 0, y: 0 };
-        canvas.addEventListener('touchstart', e => { isDragging = false; lastTouch = { x: e.touches[0].clientX, y: e.touches[0].clientY }; });
-        canvas.addEventListener('touchmove', e => {
-            isDragging = true;
-            camera.x += e.touches[0].clientX - lastTouch.x;
-            camera.y += e.touches[0].clientY - lastTouch.y;
-            lastTouch = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        // 5. EVENTS
+        let isDragging = false, lastT = { x: 0, y: 0 };
+        window.addEventListener('mousedown', e => { isDragging = false; lastT = { x: e.clientX, y: e.clientY }; });
+        window.addEventListener('mousemove', e => {
+            if (e.buttons === 1) {
+                isDragging = true;
+                camera.x += e.clientX - lastT.x; camera.y += e.clientY - lastT.y;
+                lastT = { x: e.clientX, y: e.clientY };
+            }
         });
-        canvas.addEventListener('touchend', e => { if (!isDragging) handleInput(e.changedTouches[0].clientX, e.changedTouches[0].clientY); });
+        window.addEventListener('mouseup', e => { if (!isDragging) handleInput(e.clientX, e.clientY); });
+
+        // Touch Support
+        window.addEventListener('touchstart', e => { isDragging = false; lastT = { x: e.touches[0].clientX, y: e.touches[0].clientY }; });
+        window.addEventListener('touchmove', e => {
+            isDragging = true;
+            camera.x += e.touches[0].clientX - lastT.x; camera.y += e.touches[0].clientY - lastT.y;
+            lastT = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        }, { passive: false });
+        window.addEventListener('touchend', e => { if (!isDragging) handleInput(e.changedTouches[0].clientX, e.changedTouches[0].clientY); });
 
         window.addEventListener('resize', () => { width = canvas.width = window.innerWidth; height = canvas.height = window.innerHeight; });
         window.dispatchEvent(new Event('resize'));
