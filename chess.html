@@ -131,6 +131,7 @@
         const statusDisplay = document.getElementById('status');
         const turnDisplay = document.getElementById('turn');
         const roomsContainer = document.getElementById('rooms-container');
+        let myColor = null; // Will be 'white', 'black', or null (spectator)
 
         let width, height, cellSize = 60;
         let camera = { x: 0, y: 0, zoom: 1 };
@@ -240,6 +241,18 @@
         function handleGameClick(worldPos) {
             const pieceAtPos = board.find(p => p.x === worldPos.x && p.y === worldPos.y);
 
+            if (turn !== myColor) {
+                console.log("Not your turn!");
+                return;
+            }
+
+            const pieceAtPos = board.find(p => p.x === worldPos.x && p.y === worldPos.y);
+
+            // Ensure you only pick up your own pieces
+            if (!selectedPiece && pieceAtPos && pieceAtPos.color !== myColor) {
+                return;
+            }
+
             if (selectedPiece) {
                 // If clicking the same spot or another piece of the same color, just switch selection
                 if (pieceAtPos && pieceAtPos.color === selectedPiece.color) {
@@ -276,33 +289,67 @@
             if (roomRef) roomRef.off();
             currentRoomId = id;
             roomRef = db.ref('rooms/' + id);
-            roomRef.set({ board, turn: 'white', hostName: "Player " + id });
+
+            // Host starts as White by default until a guest joins
+            myColor = 'white';
+
+            roomRef.set({
+                board,
+                turn: 'white',
+                hostName: "Player " + id,
+                hostColor: 'white',
+                guestColor: 'black',
+                guestJoined: false
+            });
+
             roomRef.onDisconnect().remove();
+            listenToRoom();
+        }
+
+        function joinOtherRoom(targetId) {
+            if (roomRef) roomRef.off();
+            currentRoomId = targetId;
+            roomRef = db.ref('rooms/' + targetId);
+
+            roomRef.once('value').then((snapshot) => {
+                const data = snapshot.val();
+                if (data && !data.guestJoined) {
+                    // Randomize colors when the second player joins
+                    const hostIsWhite = Math.random() > 0.5;
+                    myColor = hostIsWhite ? 'black' : 'white';
+
+                    roomRef.update({
+                        guestJoined: true,
+                        hostColor: hostIsWhite ? 'white' : 'black',
+                        guestColor: hostIsWhite ? 'black' : 'white'
+                    });
+
+                    statusDisplay.innerText = `Status: Playing as ${myColor}`;
+                    listenToRoom();
+                } else {
+                    alert("Room is full or doesn't exist!");
+                }
+            });
+        }
+
+        function listenToRoom() {
             roomRef.on('value', (snapshot) => {
                 const data = snapshot.val();
                 if (data) {
                     board = data.board || [];
                     turn = data.turn || 'white';
-                    updateTurnDisplay();
-                    statusDisplay.innerText = "Status: Online (" + id + ")";
-                }
-            });
-        }
 
-        function joinOtherRoom(targetId) {
-            db.ref('rooms/' + currentRoomId).remove().then(() => {
-                if (roomRef) roomRef.off();
-                currentRoomId = targetId;
-                roomRef = db.ref('rooms/' + targetId);
-                statusDisplay.innerText = "Status: Joined " + targetId;
-                roomRef.on('value', (snapshot) => {
-                    const data = snapshot.val();
-                    if (data) {
-                        board = data.board || [];
-                        turn = data.turn || 'white';
-                        updateTurnDisplay();
+                    // Update local role based on what Firebase says
+                    if (currentRoomId === myRoomId) {
+                        myColor = data.hostColor;
+                    } else {
+                        myColor = data.guestColor;
                     }
-                });
+
+                    updateTurnDisplay();
+                    statusDisplay.innerText = `Status: Online | Playing as ${myColor}`;
+                    statusDisplay.style.color = (turn === myColor) ? "#00ff00" : "#ffaa00";
+                }
             });
         }
 
@@ -323,7 +370,9 @@
         });
 
         function updateTurnDisplay() {
-            turnDisplay.innerText = `Turn: ${turn.charAt(0).toUpperCase() + turn.slice(1)}`;
+            const isMyTurn = (turn === myColor);
+            turnDisplay.innerText = `Turn: ${turn.toUpperCase()} ${isMyTurn ? "(YOUR TURN)" : ""}`;
+            turnDisplay.style.color = isMyTurn ? "#00ff00" : "#ffffff";
         }
 
         // 5. DRAW
