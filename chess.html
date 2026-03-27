@@ -118,8 +118,12 @@
             databaseURL: "https://chess-2-2a1c9-default-rtdb.europe-west1.firebasedatabase.app/"
         };
 
-        firebase.initializeApp(firebaseConfig);
-        const db = firebase.database();
+        // Initialize Firebase safely
+        let db = null;
+        try {
+            firebase.initializeApp(firebaseConfig);
+            db = firebase.database();
+        } catch (e) { console.error("Firebase load error"); }
 
         // 2. GLOBALS
         let myRoomId = Math.floor(1000 + Math.random() * 9000).toString();
@@ -131,14 +135,14 @@
         const statusDisplay = document.getElementById('status');
         const turnDisplay = document.getElementById('turn');
         const roomsContainer = document.getElementById('rooms-container');
-        let myColor = null; // Will be 'white', 'black', or null (spectator)
 
         let width, height, cellSize = 60;
         let camera = { x: 0, y: 0, zoom: 1 };
-        let isDragging = false, lastMouse = { x: 0, y: 0 };
-        let touchStartPos = { x: 0, y: 0 };
-        let initialPinchDist = null;
-        let lastZoom = 1;
+        let isDragging = false, lastMouse = { x: 0, y: 0 }, touchStartPos = { x: 0, y: 0 };
+        let initialPinchDist = null, lastZoom = 1;
+
+        // NEW: Role logic
+        let myColor = 'white'; // Default to white so it loads immediately
         let selectedPiece = null, turn = 'white', board = [];
 
         const PIECES = {
@@ -146,7 +150,42 @@
             black: { r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', p: '♟' }
         };
 
-        // 3. LOGIC
+        // 3. GAME RULES & VALIDATION
+        function isValidMove(piece, targetX, targetY) {
+            const dx = targetX - piece.x;
+            const dy = targetY - piece.y;
+            const absDx = Math.abs(dx);
+            const absDy = Math.abs(dy);
+
+            const isPathClear = (stepX, stepY) => {
+                if (!isFinite(stepX) || !isFinite(stepY) || (stepX === 0 && stepY === 0)) return false;
+                let curX = piece.x + stepX, curY = piece.y + stepY, s = 0;
+                while ((curX !== targetX || curY !== targetY) && s < 100) {
+                    if (board.find(p => p.x === curX && p.y === curY)) return false;
+                    curX += stepX; curY += stepY; s++;
+                }
+                return true;
+            };
+
+            switch (piece.type) {
+                case 'p':
+                    const dir = piece.color === 'white' ? -1 : 1;
+                    const pieceAtTarget = board.find(p => p.x === targetX && p.y === targetY);
+                    if (dx === 0 && !pieceAtTarget) {
+                        if (dy === dir) return true;
+                        if (piece.y === (piece.color === 'white' ? 6 : 1) && dy === 2 * dir && !board.find(p => p.x === piece.x && p.y === piece.y + dir)) return true;
+                    }
+                    return (absDx === 1 && dy === dir && pieceAtTarget && pieceAtTarget.color !== piece.color);
+                case 'r': return (dx === 0 || dy === 0) && isPathClear(dx === 0 ? 0 : dx / absDx, dy === 0 ? 0 : dy / absDy);
+                case 'n': return (absDx === 1 && absDy === 2) || (absDx === 2 && absDy === 1);
+                case 'b': return (absDx === absDy) && isPathClear(dx / absDx, dy / absDy);
+                case 'q': return (dx === 0 || dy === 0 || absDx === absDy) && isPathClear(dx === 0 ? 0 : dx / absDx, dy === 0 ? 0 : dy / absDy);
+                case 'k': return absDx <= 1 && absDy <= 1;
+            }
+            return false;
+        }
+
+        // 4. CORE LOGIC
         function initBoard() {
             board = [];
             const layout = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
@@ -158,289 +197,102 @@
             }
         }
 
-        function syncToFirebase() {
-            if (roomRef) roomRef.update({ board, turn });
-        }
-
         function screenToWorld(clientX, clientY) {
             const rect = canvas.getBoundingClientRect();
-
-            // 1. Get exact position relative to the top-left of the canvas
-            const canvasX = clientX - rect.left;
-            const canvasY = clientY - rect.top;
-
-            // 2. Translate screen pixels into board coordinates
-            // We must use the current zoom level to "shrink" the click distance
-            const worldX = Math.floor((canvasX - (width / 2) - camera.x) / (cellSize * camera.zoom));
-            const worldY = Math.floor((canvasY - (height / 2) - camera.y) / (cellSize * camera.zoom));
-
-            return { x: worldX, y: worldY };
-        }
-
-        function isValidMove(piece, targetX, targetY) {
-            const dx = targetX - piece.x;
-            const dy = targetY - piece.y;
-            const absDx = Math.abs(dx);
-            const absDy = Math.abs(dy);
-
-            // Helper: Check if a path is clear (for sliding pieces)
-            const isPathClear = (stepX, stepY) => {
-                // Safety: If steps are NaN or 0, it's an invalid sliding move
-                if (!isFinite(stepX) || !isFinite(stepY) || (stepX === 0 && stepY === 0)) return false;
-
-                let curX = piece.x + stepX;
-                let curY = piece.y + stepY;
-
-                // Safety counter to prevent infinite loops (max 100 squares check)
-                let safety = 0;
-                while ((curX !== targetX || curY !== targetY) && safety < 100) {
-                    if (board.find(p => p.x === curX && p.y === curY)) return false;
-                    curX += stepX;
-                    curY += stepY;
-                    safety++;
-                }
-                return true;
+            const x = clientX - rect.left, y = clientY - rect.top;
+            return {
+                x: Math.floor((x - width / 2 - camera.x) / (cellSize * camera.zoom)),
+                y: Math.floor((y - height / 2 - camera.y) / (cellSize * camera.zoom))
             };
-
-            switch (piece.type) {
-                case 'p': // Pawn
-                    const dir = piece.color === 'white' ? -1 : 1;
-                    const startRow = piece.color === 'white' ? 6 : 1;
-                    const pieceAtTarget = board.find(p => p.x === targetX && p.y === targetY);
-
-                    // Standard move forward
-                    if (dx === 0 && !pieceAtTarget) {
-                        if (dy === dir) return true;
-                        if (piece.y === startRow && dy === 2 * dir && !board.find(p => p.x === piece.x && p.y === piece.y + dir)) return true;
-                    }
-                    // Capture
-                    if (absDx === 1 && dy === dir && pieceAtTarget && pieceAtTarget.color !== piece.color) return true;
-                    return false;
-
-                case 'r': // Rook
-                    if (dx !== 0 && dy !== 0) return false;
-                    return isPathClear(dx === 0 ? 0 : dx / absDx, dy === 0 ? 0 : dy / absDy);
-
-                case 'n': // Knight
-                    return (absDx === 1 && absDy === 2) || (absDx === 2 && absDy === 1);
-
-                case 'b': // Bishop
-                    if (absDx !== absDy) return false;
-                    return isPathClear(dx / absDx, dy / absDy);
-
-                case 'q': // Queen
-                    if (dx !== 0 && dy !== 0 && absDx !== absDy) return false;
-                    return isPathClear(dx === 0 ? 0 : dx / absDx, dy === 0 ? 0 : dy / absDy);
-
-                case 'k': // King
-                    return absDx <= 1 && absDy <= 1;
-            }
-            return false;
         }
 
         function handleGameClick(worldPos) {
+            if (turn !== myColor) return;
             const pieceAtPos = board.find(p => p.x === worldPos.x && p.y === worldPos.y);
-
-            if (turn !== myColor) {
-                console.log("Not your turn!");
-                return;
-            }
-
-            const pieceAtPos = board.find(p => p.x === worldPos.x && p.y === worldPos.y);
-
-            // Ensure you only pick up your own pieces
-            if (!selectedPiece && pieceAtPos && pieceAtPos.color !== myColor) {
-                return;
-            }
 
             if (selectedPiece) {
-                // If clicking the same spot or another piece of the same color, just switch selection
-                if (pieceAtPos && pieceAtPos.color === selectedPiece.color) {
-                    selectedPiece = pieceAtPos;
-                    return;
+                if (pieceAtPos && pieceAtPos.color === myColor) {
+                    selectedPiece = pieceAtPos; return;
                 }
-
-                // Check if the move follows chess rules
                 if (isValidMove(selectedPiece, worldPos.x, worldPos.y)) {
-                    // Remove captured piece if it exists
                     board = board.filter(p => !(p.x === worldPos.x && p.y === worldPos.y));
-
-                    // Update the piece position
-                    const piece = board.find(p => p.x === selectedPiece.x && p.y === selectedPiece.y);
-                    if (piece) {
-                        piece.x = worldPos.x;
-                        piece.y = worldPos.y;
-                        selectedPiece = null;
-                        turn = (turn === 'white') ? 'black' : 'white';
-                        updateTurnDisplay();
-                        syncToFirebase();
-                    }
-                } else {
-                    // Move was illegal, deselect
-                    selectedPiece = null;
-                }
+                    const p = board.find(p => p.x === selectedPiece.x && p.y === selectedPiece.y);
+                    if (p) { p.x = worldPos.x; p.y = worldPos.y; }
+                    selectedPiece = null; turn = (turn === 'white' ? 'black' : 'white');
+                    if (roomRef) roomRef.update({ board, turn });
+                    updateTurnDisplay();
+                } else { selectedPiece = null; }
             } else if (pieceAtPos && pieceAtPos.color === turn) {
                 selectedPiece = pieceAtPos;
             }
         }
 
-        // 4. NETWORKING
+        // 5. NETWORKING
         function initAsHost(id) {
-            if (roomRef) roomRef.off();
-            currentRoomId = id;
-            roomRef = db.ref('rooms/' + id);
-
-            // Host starts as White by default until a guest joins
+            if (!db) return;
+            currentRoomId = id; roomRef = db.ref('rooms/' + id);
             myColor = 'white';
-
-            roomRef.set({
-                board,
-                turn: 'white',
-                hostName: "Player " + id,
-                hostColor: 'white',
-                guestColor: 'black',
-                guestJoined: false
-            });
-
+            roomRef.set({ board, turn: 'white', hostColor: 'white', guestColor: 'black', guestJoined: false });
             roomRef.onDisconnect().remove();
-            listenToRoom();
+            roomRef.on('value', syncState);
         }
 
         function joinOtherRoom(targetId) {
-            if (roomRef) roomRef.off();
-            currentRoomId = targetId;
-            roomRef = db.ref('rooms/' + targetId);
-
-            roomRef.once('value').then((snapshot) => {
-                const data = snapshot.val();
-                if (data && !data.guestJoined) {
-                    // Randomize colors when the second player joins
-                    const hostIsWhite = Math.random() > 0.5;
-                    myColor = hostIsWhite ? 'black' : 'white';
-
-                    roomRef.update({
-                        guestJoined: true,
-                        hostColor: hostIsWhite ? 'white' : 'black',
-                        guestColor: hostIsWhite ? 'black' : 'white'
-                    });
-
-                    statusDisplay.innerText = `Status: Playing as ${myColor}`;
-                    listenToRoom();
-                } else {
-                    alert("Room is full or doesn't exist!");
+            if (!db) return;
+            db.ref('rooms/' + targetId).once('value').then(snap => {
+                const d = snap.val();
+                if (d && !d.guestJoined) {
+                    const hostWhite = Math.random() > 0.5;
+                    myColor = hostWhite ? 'black' : 'white';
+                    roomRef = db.ref('rooms/' + targetId);
+                    roomRef.update({ guestJoined: true, hostColor: hostWhite ? 'white' : 'black', guestColor: hostWhite ? 'black' : 'white' });
+                    roomRef.on('value', syncState);
                 }
             });
         }
 
-        function listenToRoom() {
-            roomRef.on('value', (snapshot) => {
-                const data = snapshot.val();
-                if (data) {
-                    board = data.board || [];
-                    turn = data.turn || 'white';
-
-                    // Update local role based on what Firebase says
-                    if (currentRoomId === myRoomId) {
-                        myColor = data.hostColor;
-                    } else {
-                        myColor = data.guestColor;
-                    }
-
-                    updateTurnDisplay();
-                    statusDisplay.innerText = `Status: Online | Playing as ${myColor}`;
-                    statusDisplay.style.color = (turn === myColor) ? "#00ff00" : "#ffaa00";
-                }
-            });
+        function syncState(snap) {
+            const d = snap.val();
+            if (!d) return;
+            board = d.board || []; turn = d.turn || 'white';
+            myColor = (currentRoomId === myRoomId) ? d.hostColor : d.guestColor;
+            updateTurnDisplay();
+            statusDisplay.innerText = `Status: Online | You: ${myColor}`;
         }
-
-        db.ref('rooms').on('value', (snapshot) => {
-            roomsContainer.innerHTML = "";
-            let count = 0;
-            snapshot.forEach((child) => {
-                if (child.key !== currentRoomId) {
-                    count++;
-                    const btn = document.createElement('button');
-                    btn.className = 'lobby-item';
-                    btn.innerText = "▶ Join " + (child.val().hostName || child.key);
-                    btn.onclick = () => joinOtherRoom(child.key);
-                    roomsContainer.appendChild(btn);
-                }
-            });
-            if (count === 0) roomsContainer.innerHTML = "<span style='font-size:0.7em; color:#666;'>No other players online</span>";
-        });
 
         function updateTurnDisplay() {
-            const isMyTurn = (turn === myColor);
-            turnDisplay.innerText = `Turn: ${turn.toUpperCase()} ${isMyTurn ? "(YOUR TURN)" : ""}`;
-            turnDisplay.style.color = isMyTurn ? "#00ff00" : "#ffffff";
+            const isMe = (turn === myColor);
+            turnDisplay.innerText = `Turn: ${turn.toUpperCase()} ${isMe ? "(YOU)" : ""}`;
+            turnDisplay.style.color = isMe ? "#00ff00" : "#fff";
         }
 
-        // 5. DRAW
+        // 6. DRAWING
         function resize() {
-            // Use clientWidth/Height instead of window.innerWidth/Height
-            // This gets the REAL space available for the game
-            width = canvas.width = document.documentElement.clientWidth;
-            height = canvas.height = document.documentElement.clientHeight;
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
         }
 
-        // --- NEW FUNCTION: HIGHLIGHT LEGAL MOVES ---
-        function drawLegalMoves(vStep) {
-            if (!selectedPiece) return;
-
-            // Calculate which grid squares are currently visible on screen
-            const minX = Math.floor((-width / 2 - camera.x) / vStep);
-            const maxX = Math.ceil((width / 2 - camera.x) / vStep);
-            const minY = Math.floor((-height / 2 - camera.y) / vStep);
-            const maxY = Math.ceil((height / 2 - camera.y) / vStep);
-
-            ctx.fillStyle = 'rgba(0, 255, 0, 0.25)';
-            ctx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
-            ctx.lineWidth = 2;
-
-            for (let x = minX; x <= maxX; x++) {
-                for (let y = minY; y <= maxY; y++) {
-                    // Optimization: Don't check the square the piece is already standing on
-                    if (x === selectedPiece.x && y === selectedPiece.y) continue;
-
-                    if (isValidMove(selectedPiece, x, y)) {
-                        const pieceAtPos = board.find(p => p.x === x && p.y === y);
-                        if (pieceAtPos && pieceAtPos.color === selectedPiece.color) continue;
-
-                        const screenX = width / 2 + camera.x + x * vStep;
-                        const screenY = height / 2 + camera.y + y * vStep;
-
-                        ctx.fillRect(screenX + 3, screenY + 3, vStep - 6, vStep - 6);
-                        ctx.strokeRect(screenX + 3, screenY + 3, vStep - 6, vStep - 6);
-                    }
-                }
-            }
-        }
-
-        // --- UPDATED DRAW FUNCTION ---
         function draw() {
             ctx.clearRect(0, 0, width, height);
             const vStep = cellSize * camera.zoom;
+            const minX = Math.floor((-width / 2 - camera.x) / vStep), maxX = Math.ceil((width / 2 - camera.x) / vStep);
+            const minY = Math.floor((-height / 2 - camera.y) / vStep), maxY = Math.ceil((height / 2 - camera.y) / vStep);
 
-            // Grid Rendering
-            for (let x = Math.floor((-width / 2 - camera.x) / vStep); x <= Math.ceil((width / 2 - camera.x) / vStep); x++) {
-                for (let y = Math.floor((-height / 2 - camera.y) / vStep); y <= Math.ceil((height / 2 - camera.y) / vStep); y++) {
+            for (let x = minX; x <= maxX; x++) {
+                for (let y = minY; y <= maxY; y++) {
                     ctx.fillStyle = (x + y) % 2 === 0 ? '#eee' : '#999';
                     ctx.fillRect(width / 2 + camera.x + x * vStep, height / 2 + camera.y + y * vStep, vStep, vStep);
+                    if (selectedPiece && isValidMove(selectedPiece, x, y)) {
+                        ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
+                        ctx.fillRect(width / 2 + camera.x + x * vStep + 2, height / 2 + camera.y + y * vStep + 2, vStep - 4, vStep - 4);
+                    }
                 }
             }
-
-            // --- NEW: DRAW LEGAL MOVE HIGHLIGHTS ---
-            // This is called AFTER the grid but BEFORE the pieces
-            drawLegalMoves(vStep);
-
-            // Existing Selected Piece Highlight (Red box)
             if (selectedPiece) {
-                ctx.strokeStyle = '#ff0000'; ctx.lineWidth = 3;
+                ctx.strokeStyle = 'red'; ctx.lineWidth = 3;
                 ctx.strokeRect(width / 2 + camera.x + selectedPiece.x * vStep, height / 2 + camera.y + selectedPiece.y * vStep, vStep, vStep);
             }
-
-            // Existing Piece Rendering
-            ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = `${vStep * 0.8}px serif`;
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = `${vStep * 0.7}px serif`;
             board.forEach(p => {
                 ctx.fillStyle = 'black';
                 ctx.fillText(PIECES[p.color][p.type], width / 2 + camera.x + (p.x + 0.5) * vStep, height / 2 + camera.y + (p.y + 0.5) * vStep);
@@ -448,66 +300,36 @@
             requestAnimationFrame(draw);
         }
 
-        // 6. INPUTS
-        window.addEventListener('resize', resize);
+        // 7. INPUTS
+        canvas.addEventListener('mousedown', e => { isDragging = false; lastMouse = { x: e.clientX, y: e.clientY }; });
+        canvas.addEventListener('mousemove', e => { if (e.buttons === 1) { isDragging = true; camera.x += e.clientX - lastMouse.x; camera.y += e.clientY - lastMouse.y; lastMouse = { x: e.clientX, y: e.clientY }; } });
+        canvas.addEventListener('mouseup', e => { if (!isDragging) handleGameClick(screenToWorld(e.clientX, e.clientY)); });
 
-        canvas.addEventListener('mousedown', (e) => {
-            isDragging = false;
-            lastMouse = { x: e.clientX, y: e.clientY };
-        });
-        canvas.addEventListener('mousemove', (e) => {
-            if (e.buttons === 1) {
-                isDragging = true;
-                camera.x += e.clientX - lastMouse.x;
-                camera.y += e.clientY - lastMouse.y;
-                lastMouse = { x: e.clientX, y: e.clientY };
-            }
-        });
-        canvas.addEventListener('mouseup', (e) => {
-            if (!isDragging) handleGameClick(screenToWorld(e.clientX, e.clientY));
-        });
-
-        canvas.addEventListener('touchstart', (e) => {
+        canvas.addEventListener('touchstart', e => {
             if (e.cancelable) e.preventDefault();
-            if (e.touches.length === 1) {
-                isDragging = false;
-                touchStartPos = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-                lastMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-                initialPinchDist = null;
-            } else if (e.touches.length === 2) {
-                isDragging = true;
-                initialPinchDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
-                lastZoom = camera.zoom;
-            }
+            if (e.touches.length === 1) { isDragging = false; touchStartPos = lastMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }
+            else if (e.touches.length === 2) { isDragging = true; initialPinchDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY); lastZoom = camera.zoom; }
         }, { passive: false });
 
-        canvas.addEventListener('touchmove', (e) => {
+        canvas.addEventListener('touchmove', e => {
             if (e.cancelable) e.preventDefault();
             if (e.touches.length === 1 && !initialPinchDist) {
-                camera.x += e.touches[0].clientX - lastMouse.x;
-                camera.y += e.touches[0].clientY - lastMouse.y;
+                camera.x += e.touches[0].clientX - lastMouse.x; camera.y += e.touches[0].clientY - lastMouse.y;
                 if (Math.hypot(e.touches[0].clientX - touchStartPos.x, e.touches[0].clientY - touchStartPos.y) > 10) isDragging = true;
                 lastMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-            } else if (e.touches.length === 2 && initialPinchDist) {
-                const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
-                camera.zoom = Math.max(0.15, Math.min(lastZoom * (dist / initialPinchDist), 4));
+            } else if (e.touches.length === 2) {
+                const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+                camera.zoom = Math.max(0.15, Math.min(lastZoom * (d / initialPinchDist), 4));
             }
         }, { passive: false });
 
-        canvas.addEventListener('touchend', (e) => {
-            if (e.touches.length < 2) initialPinchDist = null;
-            if (e.touches.length === 0 && !isDragging) handleGameClick(screenToWorld(touchStartPos.x, touchStartPos.y));
-        }, { passive: false });
+        canvas.addEventListener('touchend', e => { if (e.touches.length === 0 && !isDragging) handleGameClick(screenToWorld(touchStartPos.x, touchStartPos.y)); }, { passive: false });
+        window.addEventListener('resize', resize);
+        canvas.addEventListener('wheel', e => camera.zoom = Math.max(0.1, Math.min(camera.zoom * (e.deltaY > 0 ? 0.9 : 1.1), 5)));
 
-        canvas.addEventListener('wheel', (e) => {
-            camera.zoom = Math.max(0.1, Math.min(camera.zoom * (e.deltaY > 0 ? 0.9 : 1.1), 5));
-        });
-
-        // 7. START
-        resize();
-        initBoard();
-        draw();
-        initAsHost(myRoomId);
+        // START
+        resize(); initBoard(); draw();
+        if (db) initAsHost(myRoomId); else statusDisplay.innerText = "Offline Mode";
     </script>
 </body>
 </html>
