@@ -261,10 +261,25 @@
 
             if (p.type === 'p') {
                 const dir = p.color === 'white' ? -1 : 1;
-                if (isFree(p.x, p.y + dir)) moves.push({ x: p.x, y: p.y + dir, cap: false });
+                const startRank = p.color === 'white' ? 7 : 0; // Starting row for pawns
+
+                // 1. Standard Forward Move (1 step)
+                if (isFree(p.x, p.y + dir)) {
+                    moves.push({ x: p.x, y: p.y + dir, cap: false });
+
+                    // 2. Initial Double Step (Only if 1st step was free AND on start rank)
+                    // Note: For 'Infinite' feel, we check if it's on the home row
+                    if (p.y === (p.color === 'white' ? 6 : 1) && isFree(p.x, p.y + (dir * 2))) {
+                        moves.push({ x: p.x, y: p.y + (dir * 2), cap: false });
+                    }
+                }
+
+                // 3. Diagonal Captures
                 [1, -1].forEach(dx => {
                     const target = getAt(p.x + dx, p.y + dir);
-                    if (target && target.color !== p.color) moves.push({ x: p.x + dx, y: p.y + dir, cap: true });
+                    if (target && target.color !== p.color) {
+                        moves.push({ x: p.x + dx, y: p.y + dir, cap: true });
+                    }
                 });
             } else if (p.type === 'r') [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(d => addDir(d[0], d[1], true));
             else if (p.type === 'b') [[1, 1], [1, -1], [-1, 1], [-1, -1]].forEach(d => addDir(d[0], d[1], true));
