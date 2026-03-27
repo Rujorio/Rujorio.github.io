@@ -140,6 +140,8 @@
         let camera = { x: 0, y: 0, zoom: 1 };
         let isDragging = false, lastMouse = { x: 0, y: 0 }, touchStartPos = { x: 0, y: 0 };
         let initialPinchDist = null, lastZoom = 1;
+        let gameOver = false;
+        let winner = null;
 
         // NEW: Role logic
         let myColor = 'white'; // Default to white so it loads immediately
@@ -185,6 +187,38 @@
             return false;
         }
 
+        function checkWinCondition() {
+            const whiteKings = board.filter(p => p.color === 'white' && p.type === 'k').length;
+            const blackKings = board.filter(p => p.color === 'black' && p.type === 'k').length;
+
+            if (whiteKings === 0 || blackKings === 0) {
+                gameOver = true;
+                winner = whiteKings > 0 ? 'White' : 'Black';
+
+                // Update Firebase so both players see the game over screen
+                if (roomRef) {
+                    roomRef.update({
+                        status: 'GAMEOVER',
+                        winner: winner
+                    });
+                }
+            }
+        }
+
+        function resetGame() {
+            gameOver = false;
+            winner = null;
+            initBoard();
+            if (roomRef) {
+                roomRef.update({
+                    board: board,
+                    turn: 'white',
+                    status: 'PLAYING',
+                    winner: null
+                });
+            }
+        }
+
         // 4. CORE LOGIC
         function initBoard() {
             board = [];
@@ -207,6 +241,10 @@
         }
 
         function handleGameClick(worldPos) {
+            if (gameOver) {
+                resetGame();
+                return;
+            }
             if (turn !== myColor) return;
             const pieceAtPos = board.find(p => p.x === worldPos.x && p.y === worldPos.y);
 
@@ -224,6 +262,23 @@
                 } else { selectedPiece = null; }
             } else if (pieceAtPos && pieceAtPos.color === turn) {
                 selectedPiece = pieceAtPos;
+            }
+            if (isValidMove(selectedPiece, worldPos.x, worldPos.y)) {
+                // 1. Perform Capture
+                board = board.filter(p => !(p.x === worldPos.x && p.y === worldPos.y));
+
+                // 2. Move Piece
+                const p = board.find(p => p.x === selectedPiece.x && p.y === selectedPiece.y);
+                if (p) { p.x = worldPos.x; p.y = worldPos.y; }
+
+                // 3. Check if that move killed the last King
+                checkWinCondition();
+
+                selectedPiece = null;
+                turn = (turn === 'white' ? 'black' : 'white');
+
+                if (roomRef) roomRef.update({ board, turn });
+                updateTurnDisplay();
             }
         }
 
@@ -307,7 +362,17 @@
         function syncState(snap) {
             const d = snap.val();
             if (!d) return;
-            board = d.board || []; turn = d.turn || 'white';
+            board = d.board || [];
+            turn = d.turn || 'white';
+
+            // Sync Game Over state
+            if (d.status === 'GAMEOVER') {
+                gameOver = true;
+                winner = d.winner;
+            } else {
+                gameOver = false;
+            }
+
             myColor = (currentRoomId === myRoomId) ? d.hostColor : d.guestColor;
             updateTurnDisplay();
             statusDisplay.innerText = `Status: Online | You: ${myColor}`;
@@ -351,6 +416,26 @@
                 ctx.fillText(PIECES[p.color][p.type], width / 2 + camera.x + (p.x + 0.5) * vStep, height / 2 + camera.y + (p.y + 0.5) * vStep);
             });
             requestAnimationFrame(draw);
+            if (gameOver) {
+                // Darken the background
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, width, height);
+
+                // Draw Text
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 40px sans-serif';
+                ctx.fillText(`GAME OVER`, width / 2, height / 2 - 40);
+
+                ctx.fillStyle = winner === 'White' ? '#fff' : '#aaa';
+                ctx.font = '30px sans-serif';
+                ctx.fillText(`${winner} Wins!`, width / 2, height / 2 + 10);
+
+                ctx.font = '16px sans-serif';
+                ctx.fillText(`Tap anywhere to reset`, width / 2, height / 2 + 60);
+            }
+
+            requestAnimationFrame(draw);
+        }
         }
 
         // 7. INPUTS
