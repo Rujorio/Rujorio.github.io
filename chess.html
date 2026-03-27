@@ -220,13 +220,6 @@
                 case 'k': return absDx <= 1 && absDy <= 1;
             }
             return false;
-            moveCount++;
-            if (roomRef) {
-                roomRef.update({
-                    board: board,
-                    turn: turn,
-                    moveCount: moveCount // Sync the count
-                });
             }
         }
 
@@ -282,12 +275,18 @@
                     checkWinCondition();
                     selectedPiece = null;
                     turn = (turn === 'white' ? 'black' : 'white');
-                    if (roomRef) roomRef.update({ board, turn });
+
+                    // --- ADD THIS PART HERE ---
+                    moveCount++;
+                    if (roomRef) {
+                        roomRef.update({
+                            board,
+                            turn,
+                            moveCount: moveCount // This triggers the syncState on both screens
+                        });
+                    }
                     updateTurnDisplay();
-                } else { selectedPiece = null; }
-            } else if (pieceAtPos && pieceAtPos.color === turn) {
-                selectedPiece = pieceAtPos;
-            }
+                }
         }
 
         function spawnExtraPieces(type, color, count, direction = "outer") {
