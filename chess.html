@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Infinite Chess 2 - Browser Test</title>
+    <title>Infinite Chess 2 - Stable Build</title>
 
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
@@ -24,7 +24,6 @@
             width: 100vw;
             height: 100vh;
             z-index: 1;
-            /* NEW: Prevents mobile "pull-to-refresh" and accidental zooming */
             touch-action: none !important;
             user-select: none;
             -webkit-user-select: none;
@@ -57,7 +56,7 @@
             margin-bottom: 10px;
         }
 
-        #lobby-list {
+        #rooms-container {
             margin-top: 10px;
             border-top: 1px solid #444;
             padding-top: 10px;
@@ -81,12 +80,18 @@
                 background: #218838;
             }
 
-        .lobby-label {
-            font-size: 0.7em;
-            text-transform: uppercase;
-            color: #aaa;
-            margin-bottom: 5px;
-            display: block;
+        .card-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.85);
+            z-index: 1000;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
         }
 
         .card {
@@ -97,7 +102,7 @@
             width: 200px;
             text-align: center;
             cursor: pointer;
-            transition: transform 0.2s, background 0.2s;
+            transition: transform 0.2s;
         }
 
             .card:hover {
@@ -107,19 +112,13 @@
 
             .card h3 {
                 color: #f1c40f;
-                margin-top: 0;
+                margin: 0 0 10px 0;
             }
 
             .card p {
                 font-size: 0.9em;
                 color: #ecf0f1;
             }
-
-            .card small {
-                color: #95a5a6;
-                font-weight: bold;
-            }
-
     </style>
 </head>
 <body>
@@ -128,16 +127,14 @@
         <div id="turn">Turn: White</div>
         <div class="controls">Drag to Pan | Scroll to Zoom</div>
         <div id="status">Status: Initializing...</div>
-
-        <div id="lobby-list">
-            <span class="lobby-label">Available Games:</span>
-            <div id="rooms-container"></div>
-        </div>
+        <div id="rooms-container"></div>
     </div>
-    <div id="card-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); z-index:1000; flex-direction:column; align-items:center; justify-content:center;">
+
+    <div id="card-overlay" class="card-overlay">
         <h1 style="color:gold; margin-bottom:20px;">Choose a Power-up</h1>
         <div id="card-container" style="display:flex; gap:20px;"></div>
     </div>
+
     <canvas id="gameCanvas"></canvas>
 
     <script>
@@ -178,8 +175,6 @@
 
         let moveCount = 0;
         let isChoosingCard = false;
-        let availableCards = [];
-
         let myColor = 'white';
         let selectedPiece = null, turn = 'white', board = [];
 
@@ -232,7 +227,12 @@
         }
 
         function resetGame() {
-            gameOver = false; winner = null; moveCount = 0; initBoard();
+            gameOver = false;
+            winner = null;
+            moveCount = 0;
+            isChoosingCard = false;
+            document.getElementById('card-overlay').style.display = 'none';
+            initBoard();
             if (roomRef) roomRef.update({ board, turn: 'white', status: 'PLAYING', winner: null, moveCount: 0 });
         }
 
@@ -250,9 +250,10 @@
 
         function screenToWorld(clientX, clientY) {
             const rect = canvas.getBoundingClientRect();
+            const vStep = cellSize * camera.zoom;
             return {
-                x: Math.floor((clientX - rect.left - width / 2 - camera.x) / (cellSize * camera.zoom)),
-                y: Math.floor((clientY - rect.top - height / 2 - camera.y) / (cellSize * camera.zoom))
+                x: Math.floor((clientX - rect.left - width / 2 - camera.x) / vStep),
+                y: Math.floor((clientY - rect.top - height / 2 - camera.y) / vStep)
             };
         }
 
@@ -273,13 +274,12 @@
 
                     checkWinCondition();
                     selectedPiece = null;
-                    turn = (turn === 'white' ? 'black' : 'white');
-                    moveCount++;
+                    const nextTurn = (turn === 'white' ? 'black' : 'white');
+                    const nextMoveCount = moveCount + 1;
 
                     if (roomRef) {
-                        roomRef.update({ board, turn, moveCount: moveCount });
+                        roomRef.update({ board, turn: nextTurn, moveCount: nextMoveCount });
                     }
-                    updateTurnDisplay();
                 } else {
                     selectedPiece = null;
                 }
@@ -294,29 +294,21 @@
 
             for (let i = 0; i < count; i++) {
                 let targetX, targetY;
-
                 if (direction === "forward") {
                     const myPawns = board.filter(p => p.color === color && p.type === 'p');
                     if (myPawns.length > 0) {
                         const p = myPawns[i % myPawns.length];
-                        targetX = p.x;
-                        targetY = p.y + pDir;
-                    } else {
-                        targetX = i; targetY = spawnY + pDir;
-                    }
+                        targetX = p.x; targetY = p.y + pDir;
+                    } else { targetX = i; targetY = spawnY + pDir; }
                 } else {
-                    // CIRCUIT BREAKER: If it can't find a spot in 20 tries, it stops.
                     let attemptX = (i % 2 === 0) ? -1 - Math.floor(i / 2) : 8 + Math.floor(i / 2);
                     let safety = 0;
                     while (board.find(p => p.x === attemptX && p.y === spawnY) && safety < 20) {
                         if (i % 2 === 0) attemptX--; else attemptX++;
                         safety++;
                     }
-                    targetX = attemptX;
-                    targetY = spawnY;
+                    targetX = attemptX; targetY = spawnY;
                 }
-
-                // Final check to prevent stacking pieces
                 if (!board.find(p => p.x === targetX && p.y === targetY)) {
                     board.push({ x: targetX, y: targetY, type: type, color: color });
                 }
@@ -328,27 +320,24 @@
             if (!db) { statusDisplay.innerText = "Offline Mode"; return; }
             initAsHost(myRoomId);
             db.ref('rooms').on('value', (snap) => {
-                roomsContainer.innerHTML = "";
-                let count = 0;
+                roomsContainer.innerHTML = "<span style='font-size:0.7em; color:#aaa;'>Games:</span>";
                 snap.forEach((child) => {
                     const data = child.val();
                     if (child.key !== currentRoomId && data && !data.guestJoined) {
-                        count++;
                         const btn = document.createElement('button');
                         btn.className = 'lobby-item';
-                        btn.innerHTML = `⚡ Join Player ${child.key}`;
+                        btn.innerHTML = `⚡ Join ${child.key}`;
                         btn.onclick = () => joinOtherRoom(child.key);
                         roomsContainer.appendChild(btn);
                     }
                 });
-                if (count === 0) roomsContainer.innerHTML = "<div style='color:#666; font-size:0.8em;'>Searching...</div>";
             });
         }
 
         function initAsHost(id) {
             currentRoomId = id; roomRef = db.ref('rooms/' + id);
             myColor = 'white';
-            roomRef.set({ board, turn: 'white', hostColor: 'white', guestColor: 'black', guestJoined: false, moveCount: 0 });
+            roomRef.set({ board, turn: 'white', hostColor: 'white', guestJoined: false, moveCount: 0, status: 'PLAYING' });
             roomRef.onDisconnect().remove();
             roomRef.on('value', syncState);
         }
@@ -361,7 +350,7 @@
                 const d = snap.val();
                 if (d) {
                     myColor = d.hostColor === 'white' ? 'black' : 'white';
-                    roomRef.update({ guestJoined: true, guestColor: myColor });
+                    roomRef.update({ guestJoined: true });
                     roomRef.on('value', syncState);
                 }
             });
@@ -376,16 +365,10 @@
             gameOver = d.status === 'GAMEOVER';
             winner = d.winner || null;
 
-            // Check if the move count actually changed in Firebase
             if (d.moveCount !== undefined && d.moveCount !== moveCount) {
                 moveCount = d.moveCount;
-
-                // Trigger cards every 6 moves
                 if (moveCount > 0 && moveCount % 6 === 0) {
-                    // Only the player whose turn it is sees the cards
-                    if (turn === myColor && !isChoosingCard) {
-                        triggerCardSelection();
-                    }
+                    if (turn === myColor) triggerCardSelection();
                 }
             }
 
@@ -403,82 +386,48 @@
         async function triggerCardSelection() {
             if (isChoosingCard) return;
             isChoosingCard = true;
-
             try {
-                const snapshot = await db.ref('powerups').once('value');
-                const allPowerups = [];
-                snapshot.forEach(child => {
-                    allPowerups.push({ id: child.key, ...child.val() });
-                });
+                const snap = await db.ref('powerups').once('value');
+                const pool = [];
+                snap.forEach(c => pool.push({ id: c.key, ...c.val() }));
 
-                if (allPowerups.length > 0) {
-                    // Ensure we don't try to pick more cards than exist
-                    const countToPick = Math.min(2, allPowerups.length);
-                    availableCards = getWeightedRandomCards(allPowerups, countToPick);
-                    showCardUI();
-                } else {
-                    isChoosingCard = false;
-                    console.warn("No powerups found in Firebase 'powerups' node.");
-                }
-            } catch (e) {
-                isChoosingCard = false;
-                console.error("Powerup fetch failed", e);
-            }
+                if (pool.length > 0) {
+                    const selected = [];
+                    let tempPool = [...pool];
+                    for (let i = 0; i < Math.min(2, pool.length); i++) {
+                        let idx = Math.floor(Math.random() * tempPool.length);
+                        selected.push(tempPool.splice(idx, 1)[0]);
+                    }
+                    showCardUI(selected);
+                } else { isChoosingCard = false; }
+            } catch (e) { isChoosingCard = false; }
         }
 
-        function showCardUI() {
+        function showCardUI(cards) {
             const overlay = document.getElementById('card-overlay');
             const container = document.getElementById('card-container');
-            overlay.style.display = 'flex';
             container.innerHTML = '';
-
-            availableCards.forEach(card => {
-                const cardEl = document.createElement('div');
-                cardEl.className = 'card';
-                cardEl.innerHTML = `
-            <h3>${card.name}</h3>
-            <p>${card.desc}</p>
-            <small>${card.rarity.toUpperCase()}</small>
-        `;
-                cardEl.onclick = () => applyPowerup(card);
-                container.appendChild(cardEl);
+            overlay.style.display = 'flex';
+            cards.forEach(card => {
+                const div = document.createElement('div');
+                div.className = 'card';
+                div.innerHTML = `<h3>${card.name}</h3><p>${card.desc}</p><small>${card.rarity || 'Common'}</small>`;
+                div.onclick = () => {
+                    executePowerupLogic(card.id);
+                    isChoosingCard = false;
+                    overlay.style.display = 'none';
+                    if (roomRef) roomRef.update({ board });
+                };
+                container.appendChild(div);
             });
         }
 
-        function applyPowerup(card) {
-            executePowerupLogic(card.id);
-            isChoosingCard = false;
-            document.getElementById('card-overlay').style.display = 'none';
-            statusDisplay.innerText = `Activated: ${card.name}!`;
-        }
-
-        function getWeightedRandomCards(allCards, count) {
-            let selected = [];
-            let tempPool = [...allCards];
-            for (let i = 0; i < count; i++) {
-                let totalWeight = tempPool.reduce((sum, card) => sum + (card.weight || 10), 0);
-                let random = Math.random() * totalWeight;
-                let cursor = 0;
-                for (let j = 0; j < tempPool.length; j++) {
-                    cursor += (tempPool[j].weight || 10);
-                    if (random <= cursor) {
-                        selected.push(tempPool[j]);
-                        tempPool.splice(j, 1);
-                        break;
-                    }
-                }
+        function executePowerupLogic(id) {
+            switch (id) {
+                case 'p1': spawnExtraPieces('r', myColor, 2); break;
+                case 'p2': spawnExtraPieces('k', myColor, 1); break;
+                case 'p3': spawnExtraPieces('p', myColor, 2, "forward"); break;
             }
-            return selected;
-        }
-
-        function executePowerupLogic(cardId) {
-            const player = myColor;
-            switch (cardId) {
-                case 'p1': spawnExtraPieces('r', player, 2, "outer"); break;
-                case 'p2': spawnExtraPieces('k', player, 1, "outer"); break;
-                case 'p3': spawnExtraPieces('p', player, 1, "forward"); break;
-            }
-            if (roomRef) roomRef.update({ board: board });
         }
 
         // 7. DRAWING
@@ -486,28 +435,17 @@
 
         function draw() {
             ctx.clearRect(0, 0, width, height);
+            const vStep = Math.max(5, cellSize * camera.zoom);
+            const centerX = width / 2 + camera.x, centerY = height / 2 + camera.y;
 
-            // SAFETY: If zoom or cellSize somehow hit 0, this prevents an infinite loop
-            const vStep = Math.max(1, cellSize * (camera.zoom || 1));
+            const minX = Math.floor(-centerX / vStep), maxX = Math.ceil((width - centerX) / vStep);
+            const minY = Math.floor(-centerY / vStep), maxY = Math.ceil((height - centerY) / vStep);
 
-            // This math ensures the grid coordinates stay relative to your screen center
-            const centerX = width / 2 + (camera.x || 0);
-            const centerY = height / 2 + (camera.y || 0);
-
-            const minX = Math.floor(-centerX / vStep);
-            const maxX = Math.ceil((width - centerX) / vStep);
-            const minY = Math.floor(-centerY / vStep);
-            const maxY = Math.ceil((height - centerY) / vStep);
-
-            // CIRCUIT BREAKER: If the loop tries to draw more than 5,000 squares, 
-            // it skips the grid for 1 frame instead of crashing your browser.
-            const totalSquares = (maxX - minX) * (maxY - minY);
-            if (totalSquares > 0 && totalSquares < 5000) {
+            if ((maxX - minX) * (maxY - minY) < 4000) {
                 for (let x = minX; x <= maxX; x++) {
                     for (let y = minY; y <= maxY; y++) {
                         ctx.fillStyle = (x + y) % 2 === 0 ? '#eee' : '#999';
                         ctx.fillRect(centerX + x * vStep, centerY + y * vStep, vStep, vStep);
-
                         if (selectedPiece && isValidMove(selectedPiece, x, y)) {
                             ctx.fillStyle = 'rgba(0, 255, 0, 0.2)';
                             ctx.fillRect(centerX + x * vStep + 2, centerY + y * vStep + 2, vStep - 4, vStep - 4);
@@ -517,30 +455,21 @@
             }
 
             if (selectedPiece) {
-                ctx.strokeStyle = 'red';
-                ctx.lineWidth = 3;
+                ctx.strokeStyle = 'red'; ctx.lineWidth = 3;
                 ctx.strokeRect(centerX + selectedPiece.x * vStep, centerY + selectedPiece.y * vStep, vStep, vStep);
             }
 
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.font = `${vStep * 0.7}px serif`;
-
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = `${vStep * 0.7}px serif`;
             board.forEach(p => {
                 ctx.fillStyle = 'black';
                 ctx.fillText(PIECES[p.color][p.type], centerX + (p.x + 0.5) * vStep, centerY + (p.y + 0.5) * vStep);
             });
 
             if (gameOver) {
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-                ctx.fillRect(0, 0, width, height);
-                ctx.fillStyle = 'white';
-                ctx.font = 'bold 40px sans-serif';
-                ctx.fillText(`GAME OVER`, width / 2, height / 2 - 40);
-                ctx.font = '30px sans-serif';
-                ctx.fillText(`${winner} Wins!`, width / 2, height / 2 + 10);
-                ctx.font = '16px sans-serif';
-                ctx.fillText(`Tap anywhere to restart`, width / 2, height / 2 + 60);
+                ctx.fillStyle = 'rgba(0,0,0,0.8)'; ctx.fillRect(0, 0, width, height);
+                ctx.fillStyle = 'white'; ctx.font = 'bold 30px sans-serif';
+                ctx.fillText(`${winner.toUpperCase()} WINS!`, width / 2, height / 2);
+                ctx.font = '15px sans-serif'; ctx.fillText('Click to Restart', width / 2, height / 2 + 40);
             }
             requestAnimationFrame(draw);
         }
@@ -549,27 +478,9 @@
         canvas.addEventListener('mousedown', e => { isDragging = false; lastMouse = { x: e.clientX, y: e.clientY }; });
         canvas.addEventListener('mousemove', e => { if (e.buttons === 1) { isDragging = true; camera.x += e.clientX - lastMouse.x; camera.y += e.clientY - lastMouse.y; lastMouse = { x: e.clientX, y: e.clientY }; } });
         canvas.addEventListener('mouseup', e => { if (!isDragging) handleGameClick(screenToWorld(e.clientX, e.clientY)); });
+        canvas.addEventListener('wheel', e => { camera.zoom = Math.max(0.1, Math.min(camera.zoom * (e.deltaY > 0 ? 0.9 : 1.1), 5)); });
 
-        canvas.addEventListener('touchstart', e => {
-            if (e.touches.length === 1) { isDragging = false; touchStartPos = lastMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY }; }
-            else if (e.touches.length === 2) { isDragging = true; initialPinchDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY); lastZoom = camera.zoom; }
-        }, { passive: false });
-
-        canvas.addEventListener('touchmove', e => {
-            if (e.touches.length === 1 && !initialPinchDist) {
-                camera.x += e.touches[0].clientX - lastMouse.x; camera.y += e.touches[0].clientY - lastMouse.y;
-                if (Math.hypot(e.touches[0].clientX - touchStartPos.x, e.touches[0].clientY - touchStartPos.y) > 10) isDragging = true;
-                lastMouse = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-            } else if (e.touches.length === 2) {
-                const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
-                camera.zoom = Math.max(0.15, Math.min(lastZoom * (d / initialPinchDist), 4));
-            }
-        }, { passive: false });
-
-        canvas.addEventListener('touchend', e => { if (e.touches.length === 0 && !isDragging) handleGameClick(screenToWorld(touchStartPos.x, touchStartPos.y)); initialPinchDist = null; });
         window.addEventListener('resize', resize);
-        canvas.addEventListener('wheel', e => camera.zoom = Math.max(0.1, Math.min(camera.zoom * (e.deltaY > 0 ? 0.9 : 1.1), 5)));
-
         resize(); initBoard(); draw(); initMultiplayer();
     </script>
 </body>
