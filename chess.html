@@ -310,42 +310,30 @@
         });
 
         function joinRoom(name) {
-            playersRef.once('value', snap => {
-                const count = snap.numChildren();
-                if (count === 0) {
-                    myColor = 'white';
-                    initBoard(name);
-                    // NEW: If the creator leaves, the whole room vanishes
-                    roomRef.onDisconnect().remove();
-                }
             if (!name) return;
             if (roomRef) roomRef.off();
 
-            playersRef.once('value', snap => {
-                const count = snap.numChildren();
-                if (count === 0) {
-                    myColor = 'white';
-                    initBoard(name);
-                    // NEW: If the creator leaves, the whole room vanishes
-                    roomRef.onDisconnect().remove();
-                }
             roomRef = db.ref('rooms/' + name);
             const playersRef = roomRef.child('players');
-            const myPlayerRef = playersRef.push();
-            myPlayerRef.onDisconnect().remove();
 
+            // Check current players before joining
             playersRef.once('value', snap => {
                 const count = snap.numChildren();
+
                 if (count === 0) {
                     myColor = 'white';
-                    initBoard(name); // ONLY initializes if room is empty
+                    initBoard(); // Create the board only if the room is new
+                    roomRef.onDisconnect().remove(); // Cleanup room if creator leaves before game starts
                 } else if (count === 1) {
                     myColor = 'black';
                 } else {
                     myColor = 'spectator';
                 }
 
+                const myPlayerRef = playersRef.push();
+                myPlayerRef.onDisconnect().remove();
                 myPlayerRef.set({ color: myColor });
+
                 document.getElementById('lobby').style.display = 'none';
                 document.getElementById('ui-room').innerText = "Room: " + name;
                 setupGameSync();
@@ -386,7 +374,7 @@
             });
         }
 
-        function initBoard(name) {
+        function initBoard() {
             const b = [];
             const layout = ['r', 'n', 'b', 'q', 'k', 'b', 'n', 'r'];
             for (let i = 0; i < 8; i++) {
@@ -395,8 +383,8 @@
                 b.push({ x: i, y: 0, type: layout[i], color: 'black' });
                 b.push({ x: i, y: 1, type: 'p', color: 'black' });
             }
-            // Using .set() here because it's a fresh room
-            roomRef.set({ board: b, turn: 'white', moveHistory: {} });
+            // Use update so we don't overwrite the players list
+            roomRef.update({ board: b, turn: 'white', moveHistory: {} });
         }
 
         // --- 4. POWERUP SYSTEM ---
@@ -559,38 +547,45 @@
 
         function getValidMoves(p) {
             const moves = [];
-            const dirs = {
-                r: [[0, 1], [0, -1], [1, 0], [-1, 0]],
-                b: [[1, 1], [1, -1], [-1, 1], [-1, -1]],
-                n: [[1, 2], [1, -2], [-1, 2], [-1, -2], [2, 1], [2, -1], [-2, 1], [-2, -1]],
-                q: [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [1, -1], [-1, 1], [-1, -1]],
-                k: [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [1, -1], [-1, 1], [-1, -1]]
+            const moveTypes = {
+                r: { dirs: [[0, 1], [0, -1], [1, 0], [-1, 0]], slide: true },
+                b: { dirs: [[1, 1], [1, -1], [-1, 1], [-1, -1]], slide: true },
+                q: { dirs: [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [1, -1], [-1, 1], [-1, -1]], slide: true },
+                k: { dirs: [[0, 1], [0, -1], [1, 0], [-1, 0], [1, 1], [1, -1], [-1, 1], [-1, -1]], slide: false },
+                n: { dirs: [[1, 2], [1, -2], [-1, 2], [-1, -2], [2, 1], [2, -1], [-2, 1], [-2, -1]], slide: false }
             };
 
             if (p.type === 'p') {
                 const dy = p.color === 'white' ? -1 : 1;
-                const startRow = p.color === 'white' ? 6 : 1;
-
-                // 1. Single Square Forward
-                const oneStep = board.find(bp => bp.x === p.x && bp.y === p.y + dy);
-                if (!oneStep) {
+                // Forward 1
+                if (!board.find(b => b.x === p.x && b.y === p.y + dy)) {
                     moves.push({ x: p.x, y: p.y + dy });
-
-                    // 2. Double Square Forward (Only if first step was clear and on start row)
-                    if (p.y === startRow) {
-                        const twoStep = board.find(bp => bp.x === p.x && bp.y === p.y + (dy * 2));
-                        if (!twoStep) {
+                    // Forward 2
+                    if ((p.color === 'white' && p.y === 6) || (p.color === 'black' && p.y === 1)) {
+                        if (!board.find(b => b.x === p.x && b.y === p.y + (dy * 2))) {
                             moves.push({ x: p.x, y: p.y + (dy * 2) });
                         }
                     }
                 }
-
-                // 3. Diagonals (Captures)
-                const caps = [[-1, dy], [1, dy]];
-                caps.forEach(c => {
-                    const target = board.find(bp => bp.x === p.x + c[0] && bp.y === p.y + c[1]);
-                    if (target && target.color !== p.color) {
-                        moves.push({ x: p.x + c[0], y: p.y + c[1], cap: true });
+                // Captures
+                [[-1, dy], [1, dy]].forEach(d => {
+                    const target = board.find(b => b.x === p.x + d[0] && b.y === p.y + d[1]);
+                    if (target && target.color !== p.color) moves.push({ x: p.x + d[0], y: p.y + d[1], cap: true });
+                });
+            } else {
+                const config = moveTypes[p.type];
+                config.dirs.forEach(d => {
+                    let tx = p.x + d[0], ty = p.y + d[1];
+                    while (true) {
+                        const target = board.find(b => b.x === tx && b.y === ty);
+                        if (!target) {
+                            moves.push({ x: tx, y: ty });
+                        } else {
+                            if (target.color !== p.color) moves.push({ x: tx, y: ty, cap: true });
+                            break; // Blocked by piece
+                        }
+                        if (!config.slide) break;
+                        tx += d[0]; ty += d[1];
                     }
                 });
             }
