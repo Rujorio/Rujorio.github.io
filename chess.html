@@ -405,25 +405,32 @@
 
         function showPowerupDraft() {
             if (myColor === 'spectator') return;
+
+            // PREVENT FREEZE: Check if an overlay is already visible
+            if (document.getElementById('powerup-overlay')) return;
+
             const choices = getWeightedChoices();
-            if (choices.length < 2) return;
+            if (!choices || choices.length < 2) return;
 
             const overlay = document.createElement('div');
             overlay.id = 'powerup-overlay';
-            overlay.style.display = 'flex';
+            // Ensure the CSS "display: flex" is handled here
+            overlay.style.cssText = "position:fixed; inset:0; background:rgba(0,0,0,0.9); z-index:3000; display:flex; flex-direction:column; align-items:center; justify-content:center;";
+
             overlay.innerHTML = `
-        <h1 class="pulse-white">ROUND ${lastDraftRound} BONUS</h1>
-        <div class="card-container">
+        <h1 class="pulse-white" style="color:white; margin-bottom:20px;">ROUND ${lastDraftRound} BONUS</h1>
+        <div class="card-container" style="display:flex; gap:20px;">
             ${choices.map(p => `
-                <div class="power-card rarity-${p.rarity}" onclick="selectPowerup('${p.id}')">
+                <div class="power-card rarity-${p.rarity}" 
+                     style="border:2px solid; padding:20px; border-radius:15px; cursor:pointer; background:#1a1a1a; width:200px;"
+                     onclick="selectPowerup('${p.id}')">
                     <h3 style="margin:0">${p.name}</h3>
-                    <div class="card-desc">${p.desc}</div>
+                    <div class="card-desc" style="color:#ccc; font-size:0.9em; margin-top:10px;">${p.desc}</div>
                 </div>
             `).join('')}
         </div>
     `;
             document.body.appendChild(overlay);
-            choices.forEach(c => usedPowerupIds.add(c.id));
         }
 
         function selectPowerup(id) {
