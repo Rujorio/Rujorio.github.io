@@ -3,6 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="description" content="Play Infinite Chess Pro - A borderless chess experience with power-ups.">
+    <meta property="og:title" content="Infinite Chess Pro">
+    <meta property="og:description" content="Chess without boundaries. Join a room and play now!">
+    <meta property="og:image" content="https://rujorio.github.io/qr.png">
+    <meta name="theme-color" content="#1a1a1a">
     <title>Infinite Chess Pro</title>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
@@ -219,8 +224,8 @@
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
         let width, height, cellSize = 70;
-        let camera = { x: 0, y: 0, zoom: 0.8 };
-        let board = [], turn = 'white', myColor = 'white', selectedPiece = null, validMoves = [];
+        let camera = { x: 0, y: 0, zoom: 1.0 };
+        let board = [], turn = 'white', myColor = 'white', selectedPiece = null, validMoves = [], lastMove = null;
         let roomRef = null, lastDraftRound = 0;
 
         const PIECES = {
@@ -237,11 +242,14 @@
         // --- 2. LOBBY LOGIC ---
         db.ref('rooms').on('value', snap => {
             const list = document.getElementById('room-list');
+            if (!list) return;
             list.innerHTML = "";
             snap.forEach(room => {
+                const players = room.val().players || {};
+                const count = Object.keys(players).length;
                 const item = document.createElement('div');
                 item.className = 'room-item';
-                item.innerText = `${room.key} (${Object.keys(room.val().players || {}).length} players)`;
+                item.innerText = `${room.key} (${count} player${count !== 1 ? 's' : ''})`;
                 item.onclick = () => joinRoom(room.key);
                 list.appendChild(item);
             });
@@ -288,6 +296,7 @@
                 if (!data) return;
                 board = data.board || [];
                 turn = data.turn || 'white';
+                lastMove = data.lastMove || null;
 
                 const moveCount = data.moveCount || 0;
                 const currentRound = Math.floor(moveCount / 2);
@@ -378,14 +387,31 @@
 
             const move = validMoves.find(m => m.x === wx && m.y === wy);
             if (move && selectedPiece) {
+                const oldX = selectedPiece.x, oldY = selectedPiece.y;
                 let nb = board.filter(p => !(p.x === wx && p.y === wy));
-                const pIdx = nb.findIndex(p => p.x === selectedPiece.x && p.y === selectedPiece.y);
-                nb[pIdx].x = wx; nb[pIdx].y = wy;
+                const pIdx = nb.findIndex(p => p.x === oldX && p.y === oldY);
+                
+                if (pIdx !== -1) {
+                    nb[pIdx].x = wx; 
+                    nb[pIdx].y = wy;
+                    
+                    // Simple Pawn Promotion logic (Promote if far from home)
+                    if (nb[pIdx].type === 'p') {
+                        if ((nb[pIdx].color === 'white' && wy <= -2) || (nb[pIdx].color === 'black' && wy >= 9)) {
+                            nb[pIdx].type = 'q';
+                        }
+                    }
 
-                roomRef.once('value', snap => {
-                    const mCount = (snap.val().moveCount || 0) + 1;
-                    roomRef.update({ board: nb, turn: turn === 'white' ? 'black' : 'white', moveCount: mCount });
-                });
+                    roomRef.once('value', snap => {
+                        const mCount = (snap.val().moveCount || 0) + 1;
+                        roomRef.update({ 
+                            board: nb, 
+                            turn: turn === 'white' ? 'black' : 'white', 
+                            moveCount: mCount,
+                            lastMove: { from: {x: oldX, y: oldY}, to: {x: wx, y: wy} }
+                        });
+                    });
+                }
                 selectedPiece = null; validMoves = [];
             } else {
                 const p = board.find(bp => bp.x === wx && bp.y === wy);
@@ -410,6 +436,13 @@
                     ctx.fillStyle = (x + y) % 2 === 0 ? '#1a1a1a' : '#222';
                     ctx.fillRect(cx + x * vStep, cy + y * vStep, vStep, vStep);
                 }
+            }
+
+            // Last move highlight
+            if (lastMove) {
+                ctx.fillStyle = "rgba(255, 255, 0, 0.1)";
+                ctx.fillRect(cx + lastMove.from.x * vStep, cy + lastMove.from.y * vStep, vStep, vStep);
+                ctx.fillRect(cx + lastMove.to.x * vStep, cy + lastMove.to.y * vStep, vStep, vStep);
             }
 
             validMoves.forEach(m => {
@@ -448,17 +481,45 @@
         }
 
         // --- 5. INPUT HANDLERS ---
-        let isDrag = false, lastT = { x: 0, y: 0 };
-        window.onmousedown = e => { isDrag = false; lastT = { x: e.clientX, y: e.clientY }; };
-        window.onmousemove = e => {
+        let isDrag = false, lastP = { x: 0, y: 0 };
+
+        canvas.addEventListener('pointerdown', e => {
+            isDrag = false;
+            lastP = { x: e.clientX, y: e.clientY };
+            canvas.setPointerCapture(e.pointerId);
+        });
+
+        canvas.addEventListener('pointermove', e => {
             if (e.buttons === 1) {
-                isDrag = true;
-                camera.x += e.clientX - lastT.x; camera.y += e.clientY - lastT.y;
-                lastT = { x: e.clientX, y: e.clientY };
+                const dx = e.clientX - lastP.x;
+                const dy = e.clientY - lastP.y;
+                if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+                    isDrag = true;
+                    camera.x += dx;
+                    camera.y += dy;
+                    lastP = { x: e.clientX, y: e.clientY };
+                }
             }
-        };
-        window.onmouseup = e => { if (!isDrag) handleAction(e.clientX, e.clientY); };
-        window.onwheel = e => camera.zoom = Math.max(0.1, Math.min(camera.zoom * (e.deltaY > 0 ? 0.9 : 1.1), 3));
+        });
+
+        canvas.addEventListener('pointerup', e => {
+            canvas.releasePointerCapture(e.pointerId);
+            if (!isDrag) handleAction(e.clientX, e.clientY);
+        });
+
+        canvas.addEventListener('wheel', e => {
+            e.preventDefault();
+            const zoomSpeed = 0.12;
+            const delta = e.deltaY > 0 ? 1 - zoomSpeed : 1 + zoomSpeed;
+            const oldZoom = camera.zoom;
+            camera.zoom = Math.max(0.2, Math.min(camera.zoom * delta, 3));
+            
+            const zoomFactor = camera.zoom / oldZoom;
+            const mouseX = e.clientX - width / 2;
+            const mouseY = e.clientY - height / 2;
+            camera.x = mouseX - (mouseX - camera.x) * zoomFactor;
+            camera.y = mouseY - (mouseY - camera.y) * zoomFactor;
+        }, { passive: false });
 
         window.onresize = () => { width = canvas.width = window.innerWidth; height = canvas.height = window.innerHeight; };
         window.dispatchEvent(new Event('resize'));
